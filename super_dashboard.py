@@ -114,11 +114,11 @@ def fetch_chip_data(ticker, start, end, token):
 col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1.5, 1.5, 6])
 
 with col_ctrl1:
-    raw_input = st.text_input("搜尋", "8091", label_visibility="collapsed", placeholder="輸入代號或中文名稱")
+    raw_input = st.text_input("搜尋", "2408", label_visibility="collapsed", placeholder="輸入代號或中文名稱")
 with col_ctrl2:
     analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
 with col_ctrl3:
-    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 FinMind 雙引擎 + 智能畫線視覺模組</div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 FinMind 雙引擎 + 智能畫線視覺模組 (附趨勢偵測)</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 3. 核心運算引擎
@@ -189,6 +189,49 @@ if analyze_btn or raw_input:
             last_date = df.index[-1]
             date_str = f"{last_date.strftime('%m/%d')}"
             x_dates = df.index.strftime('%m-%d')
+
+            # ✨✨ 智慧趨勢線演算法 (Smart Trendline) ✨✨
+            order = 5 # 抓取轉折點的偵測區間 (前後5天)
+            local_highs = []
+            local_lows = []
+            
+            # 掃描出過去所有的 V型低點 和 倒V型高點
+            for i in range(order, len(df) - order):
+                if df['High'].iloc[i] == max(df['High'].iloc[i-order:i+order+1]):
+                    local_highs.append((i, df['High'].iloc[i]))
+                if df['Low'].iloc[i] == min(df['Low'].iloc[i-order:i+order+1]):
+                    local_lows.append((i, df['Low'].iloc[i]))
+
+            trendline_type = "無明顯趨勢線"
+            trend_x = []
+            trend_y = []
+            trend_color = ""
+
+            # 邏輯判斷：跌破月線代表弱勢，畫「下降壓力線」
+            if latest_close < df['MA20'].iloc[-1] and len(local_highs) >= 2:
+                idx1, y1 = local_highs[-2]
+                idx2, y2 = local_highs[-1]
+                if y2 < y1: # 確保高點越來越低
+                    slope = (y2 - y1) / (idx2 - idx1)
+                    idx_end = len(df) - 1
+                    y_end = y2 + slope * (idx_end - idx2)
+                    trend_x = [x_dates[idx1], x_dates[idx_end]]
+                    trend_y = [y1, y_end]
+                    trend_color = "orange"
+                    trendline_type = "下降壓力線"
+            
+            # 邏輯判斷：站上月線代表強勢，畫「上升支撐線」 (如果上面沒畫下降線的話)
+            if trendline_type == "無明顯趨勢線" and len(local_lows) >= 2:
+                idx1, y1 = local_lows[-2]
+                idx2, y2 = local_lows[-1]
+                if y2 > y1: # 確保低點越來越高
+                    slope = (y2 - y1) / (idx2 - idx1)
+                    idx_end = len(df) - 1
+                    y_end = y2 + slope * (idx_end - idx2)
+                    trend_x = [x_dates[idx1], x_dates[idx_end]]
+                    trend_y = [y1, y_end]
+                    trend_color = "yellow"
+                    trendline_type = "上升支撐線"
 
             # --- [籌碼面] ---
             end_date = datetime.date.today()
@@ -274,7 +317,7 @@ if analyze_btn or raw_input:
             col_left, col_mid, col_r1, col_r2 = st.columns([1.6, 1.1, 0.85, 0.85])
 
             # ------------------------------------------
-            # 【第 1 欄：技術面巨幅圖表 (✨ 視覺模組升級)】
+            # 【第 1 欄：技術面巨幅圖表】
             # ------------------------------------------
             with col_left:
                 with st.container(border=True):
@@ -285,24 +328,27 @@ if analyze_btn or raw_input:
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA20'], line=dict(color='cyan', width=1.5), name='MA20(月線)'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA60'], line=dict(color='magenta', width=1), name='MA60(季線)'), row=1, col=1)
                     
-                    # ✨ 繪製紅色壓力區塊
+                    # 繪製水平紅綠區塊
                     fig.add_hrect(y0=price_pressure*0.97, y1=price_pressure, line_width=0, fillcolor="red", opacity=0.15, row=1, col=1, 
                                   annotation_text=f"近期高點壓力區 ({price_pressure:.1f})", annotation_position="top left", annotation_font_color="red")
-                    
-                    # ✨ 繪製綠色雙重支撐區塊 (月線到極限低點)
                     fig.add_hrect(y0=price_strong_support, y1=price_support, line_width=0, fillcolor="green", opacity=0.15, row=1, col=1, 
                                   annotation_text=f"強勁支撐區 ({price_strong_support:.1f} - {price_support:.1f})", annotation_position="bottom right", annotation_font_color="lightgreen")
                     
+                    # ✨ 畫上自動化趨勢線
+                    if trend_x:
+                        fig.add_trace(go.Scatter(x=trend_x, y=trend_y, mode='lines', line=dict(color=trend_color, width=2, dash='dashdot'), name=trendline_type), row=1, col=1)
+                        # 加上對話框標註
+                        fig.add_annotation(x=trend_x[-1], y=trend_y[-1], text=f"動態偵測: {trendline_type}", showarrow=True, arrowhead=1, ax=40, ay=0 if trend_color=="yellow" else -20, font=dict(color=trend_color, size=10), row=1, col=1)
+
                     colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df.iterrows()]
                     fig.add_trace(go.Bar(x=x_dates, y=df['Volume'], marker_color=colors_vol, name="成交量(張)"), row=2, col=1)
                     
-                    # ✨ 繪製成交量動態對話框
+                    # 成交量動態對話框
                     vol_text = "正常盤整"
-                    if price_change > 0 and vol_change_pct > 10: vol_text = "量能觀察：多頭量增價漲"
-                    elif price_change > 0 and vol_change_pct < -10: vol_text = "量能觀察：價漲量縮背離"
-                    elif price_change < 0 and vol_change_pct > 10: vol_text = "量能觀察：帶量下殺賣壓"
-                    
-                    fig.add_annotation(x=x_dates[-1], y=df['Volume'].iloc[-1], text=vol_text, showarrow=True, arrowhead=2, arrowsize=1, ax=-50, ay=-40, 
+                    if price_change > 0 and vol_change_pct > 10: vol_text = "多頭量增價漲"
+                    elif price_change > 0 and vol_change_pct < -10: vol_text = "價漲量縮背離"
+                    elif price_change < 0 and vol_change_pct > 10: vol_text = "帶量下殺賣壓"
+                    fig.add_annotation(x=x_dates[-1], y=df['Volume'].iloc[-1], text=f"量能: {vol_text}", showarrow=True, arrowhead=2, arrowsize=1, ax=-50, ay=-40, 
                                        bgcolor="rgba(0,0,0,0.8)", bordercolor="yellow", borderwidth=1, font=dict(color="yellow", size=10), row=2, col=1)
                     
                     colors_macd = ['#FF4B4B' if val >= 0 else '#00FF00' for val in df['OSC']]
@@ -325,7 +371,6 @@ if analyze_btn or raw_input:
                     st.plotly_chart(fig, use_container_width=True)
 
                 with st.container(border=True):
-                    # ✨ 全自動區間判定顯示
                     st.markdown(f"<div class='zone-indicator' style='{zone_color_css}'>🎯 目前位階：{zone_text}</div>", unsafe_allow_html=True)
 
             # ------------------------------------------
