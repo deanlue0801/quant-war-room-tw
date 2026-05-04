@@ -248,7 +248,8 @@ if analyze_btn or raw_input:
                     st.markdown('<div class="section-title">技術面分析</div>', unsafe_allow_html=True)
                     fig = make_subplots(rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.015, row_heights=[0.4, 0.15, 0.15, 0.15, 0.15])
                     
-                    fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
+                    # 🐛 修正：加上 increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00' 確保紅漲綠跌
+                    fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA20'], line=dict(color='cyan', width=1), name='MA20'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA60'], line=dict(color='magenta', width=1), name='MA60'), row=1, col=1)
                     
@@ -269,7 +270,6 @@ if analyze_btn or raw_input:
                     fig.add_hline(y=70, line_dash="dot", line_color="red", row=5, col=1)
                     fig.add_hline(y=30, line_dash="dot", line_color="green", row=5, col=1)
                     
-                    # 🐛 修正點：鎖定純文字 X 軸，避免斷層
                     fig.update_xaxes(type='category', nticks=10, showgrid=True, gridwidth=1, gridcolor='#333')
                     fig.update_layout(height=520, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
                     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333')
@@ -304,7 +304,7 @@ if analyze_btn or raw_input:
                             height=200, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
                             barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(size=10))
                         )
-                        fig_chip.update_xaxes(type='category', nticks=6, showgrid=False) # 鎖定X軸
+                        fig_chip.update_xaxes(type='category', nticks=6, showgrid=False)
                         fig_chip.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333', secondary_y=False)
                         fig_chip.update_yaxes(showgrid=False, secondary_y=True)
                         st.plotly_chart(fig_chip, use_container_width=True)
