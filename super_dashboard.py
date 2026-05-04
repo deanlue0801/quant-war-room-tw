@@ -137,7 +137,7 @@ if analyze_btn or raw_input:
             df_full['Signal'] = df_full['MACD'].ewm(span=9).mean()
             df_full['OSC'] = df_full['MACD'] - df_full['Signal']
             
-            # 復活 KD 指標
+            # KD 指標
             low_min = df_full['Low'].rolling(window=9).min()
             high_max = df_full['High'].rolling(window=9).max()
             df_full['RSV'] = 100 * ((df_full['Close'] - low_min) / (high_max - low_min))
@@ -152,8 +152,9 @@ if analyze_btn or raw_input:
             start_date = end_date - datetime.timedelta(days=150)
             df_chip = fetch_chip_data(raw_ticker, str(start_date), str(end_date), FINMIND_TOKEN).copy()
             
+            # 🐛 修正點：補齊 chip_sum_5 的字典結構
             chip_sum_10 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
-            chip_sum_5 = {"合計": 0}
+            chip_sum_5 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0} 
             today_chip = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
             pivot_df = pd.DataFrame()
             
@@ -173,12 +174,13 @@ if analyze_btn or raw_input:
                     
                     for k in ['外資', '投信', '自營商']:
                         chip_sum_10[k] = safe_sum(last_10, k)
+                        chip_sum_5[k] = safe_sum(last_5, k) # 🐛 修正點：計算 5 日各法人資料
                         today_chip[k] = safe_sum(last_1, k)
                     chip_sum_10['合計'] = safe_sum(last_10, '三大法人合計')
                     chip_sum_5['合計'] = safe_sum(last_5, '三大法人合計')
                     today_chip['合計'] = safe_sum(last_1, '三大法人合計')
 
-            # --- 復活：黑馬潛力與勝率算式 ---
+            # --- 黑馬潛力與勝率算式 ---
             black_horse_score = 0
             bh_reasons = []
             if base_percentile < 60: black_horse_score += 1; bh_reasons.append("✅ 基期優勢 (未過熱)")
@@ -258,7 +260,10 @@ if analyze_btn or raw_input:
                     
                     fig.add_trace(go.Scatter(x=x_dates, y=df['RSI'], line=dict(color='magenta', width=1), name='RSI'), row=5, col=1)
                     
+                    # 🐛 修正點：強制將 X 軸設為類別(Category)，防止 Plotly 亂猜年份
+                    fig.update_xaxes(type='category', nticks=10, showgrid=True, gridwidth=1, gridcolor='#333')
                     fig.update_layout(height=600, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, template="plotly_dark", showlegend=False)
+                    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333')
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col_r1:
@@ -317,6 +322,7 @@ if analyze_btn or raw_input:
                     fig_chip.add_trace(go.Scatter(x=x_dates, y=df['Inst_Cost'], name='法人成本線', mode='markers', marker=dict(color='yellow', size=4)), secondary_y=True)
                     fig_chip.add_trace(go.Scatter(x=x_dates, y=df['Close'], name='收盤價', line=dict(color='rgba(255,255,255,0.3)', width=1)), secondary_y=True)
                     
+                    fig_chip.update_xaxes(type='category', nticks=10, showgrid=False) # 🐛 修正點：籌碼圖也鎖定文字X軸
                     fig_chip.update_layout(height=450, margin=dict(l=0,r=0,t=0,b=0), template="plotly_dark", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                     st.plotly_chart(fig_chip, use_container_width=True)
                 with c2_r:
@@ -341,13 +347,14 @@ if analyze_btn or raw_input:
                 with c3_l:
                     st.markdown("💡 **VPVR (價格成交量分佈)**：右側橫向長條圖代表該價位累積的成交量。最長的那根 (黃虛線) 即為 **POC (鐵板區/主力密集區)**。")
                     fig_vpvr = go.Figure()
-                    fig_vpvr.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"))
-                    fig_vpvr.add_trace(go.Scatter(x=df.index, y=df['BB_Up'], line=dict(color='rgba(255,255,255,0.2)'), name='布林上軌'))
-                    fig_vpvr.add_trace(go.Scatter(x=df.index, y=df['BB_Dn'], line=dict(color='rgba(255,255,255,0.2)', dash='dot'), name='布林下軌'))
+                    fig_vpvr.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"))
+                    fig_vpvr.add_trace(go.Scatter(x=x_dates, y=df['BB_Up'], line=dict(color='rgba(255,255,255,0.2)'), name='布林上軌'))
+                    fig_vpvr.add_trace(go.Scatter(x=x_dates, y=df['BB_Dn'], line=dict(color='rgba(255,255,255,0.2)', dash='dot'), name='布林下軌'))
                     
                     fig_vpvr.add_trace(go.Bar(x=vpvr['Volume'], y=vpvr['Bin_Center'], orientation='h', xaxis='x2', marker_color='rgba(138,180,248,0.4)', name='VPVR'))
                     fig_vpvr.add_hline(y=poc_price, line_dash="dash", line_color="yellow", annotation_text="POC 密集區")
                     
+                    fig_vpvr.update_xaxes(type='category', nticks=10, showgrid=True, gridwidth=1, gridcolor='#333') # 🐛 修正點：高階圖表也鎖定文字X軸
                     fig_vpvr.update_layout(
                         height=500, margin=dict(l=0,r=0,t=0,b=0), template="plotly_dark", xaxis_rangeslider_visible=False, showlegend=False,
                         xaxis2=dict(overlaying='x', side='top', showgrid=False, visible=False)
