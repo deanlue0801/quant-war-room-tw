@@ -50,7 +50,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌟 智慧雙向字典系統 (代號 <-> 名稱)
+# 🌟 核心數據快取引擎 (Cache System)
 # ==========================================
 @st.cache_data(ttl=86400)
 def load_stock_dicts():
@@ -60,7 +60,7 @@ def load_stock_dicts():
         id_to_name = dict(zip(info_df['stock_id'].astype(str), info_df['stock_name']))
         name_to_id = dict(zip(info_df['stock_name'], info_df['stock_id'].astype(str)))
         return id_to_name, name_to_id
-    except Exception as e:
+    except:
         return {}, {}
 
 stock_dict, name_to_id_dict = load_stock_dicts()
@@ -71,9 +71,28 @@ def color_num(val):
     else: return "0"
 
 try:
-    FINMIND_TOKEN = st.secrets["FINMIND_TOKEN"]
+    FINMIND_TOKEN = st.secrets.get("FINMIND_TOKEN", "")
 except:
-    FINMIND_TOKEN = "" 
+    FINMIND_TOKEN = ""
+
+# ✨ 建立專屬 K線與籌碼快取，降低 API 請求次數，防止報錯
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_tech_data(ticker):
+    df = yf.Ticker(f"{ticker}.TW").history(period="1y")
+    if len(df) < 20:
+        df = yf.Ticker(f"{ticker}.TWO").history(period="1y")
+    return df
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_chip_data(ticker, start, end, token):
+    dl = DataLoader()
+    if token:
+        try:
+            dl.login_by_token(api_token=token)
+        except:
+            pass
+    return dl.taiwan_stock_institutional_investors(stock_id=ticker, start_date=start, end_date=end)
+
 
 # ==========================================
 # 2. 上方橫式控制列
@@ -85,7 +104,7 @@ with col_ctrl1:
 with col_ctrl2:
     analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
 with col_ctrl3:
-    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援中文字串智慧搜尋</div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載閃電快取防護機制</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 3. 核心運算引擎
@@ -100,19 +119,18 @@ if analyze_btn or raw_input:
     else:
         raw_ticker = search_term
 
-    ticker_yf = f"{raw_ticker}.TW"
     stock_name = stock_dict.get(raw_ticker, "")
     display_title = f"{raw_ticker} {stock_name}" if stock_name else raw_ticker
     
     with st.spinner(f'鎖定目標 [{display_title}] ... 啟動戰情解析中...'):
         try:
-            # --- [技術面] ---
-            stock = yf.Ticker(ticker_yf)
-            df_full = stock.history(period="1y")
+            # --- [技術面：透過快取引擎抓取] ---
+            df_full = fetch_tech_data(raw_ticker).copy()
             
-            # ✨ 修正：嚴謹防呆機制，若資料筆數不足以計算月線，強制切換上櫃 (.TWO) 搜尋
+            # ✨ 終極防彈牆：如果連 .TWO 都沒資料，優雅中斷，不讓系統崩潰
             if len(df_full) < 20:
-                df_full = yf.Ticker(f"{raw_ticker}.TWO").history(period="1y")
+                st.error(f"🚨 無法取得 [{display_title}] 的有效報價資料。可能是股票代號錯誤，或 Yahoo Finance 暫時異常。")
+                st.stop()
                 
             df_full.index = df_full.index.tz_localize(None)
             df_full['Volume'] = df_full['Volume'] / 1000
@@ -165,14 +183,10 @@ if analyze_btn or raw_input:
             date_str = f"{last_date.strftime('%m/%d')}"
             x_dates = df.index.strftime('%m-%d')
 
-            # --- [籌碼面] ---
-            dl = DataLoader()
-            if FINMIND_TOKEN:
-                dl.login_by_token(api_token=FINMIND_TOKEN)
-                
+            # --- [籌碼面：透過快取引擎抓取] ---
             end_date = datetime.date.today()
             start_date = end_date - datetime.timedelta(days=45)
-            df_chip = dl.taiwan_stock_institutional_investors(stock_id=raw_ticker, start_date=str(start_date), end_date=str(end_date))
+            df_chip = fetch_chip_data(raw_ticker, str(start_date), str(end_date), FINMIND_TOKEN).copy()
             
             chip_sum_10 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
             chip_sum_5 = {"合計": 0}
@@ -433,4 +447,4 @@ if analyze_btn or raw_input:
                     st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線支撐： <b>{price_support:.1f}</b><br>極限支撐： <b>{price_strong_support:.1f}</b></div>", unsafe_allow_html=True)
 
         except Exception as e:
-            st.error(f"資料處理發生錯誤：{e}。請確認您的輸入是否正確。")
+            st.error(f"資料處理發生錯誤：{e}。請截圖此訊息以便排錯。")
