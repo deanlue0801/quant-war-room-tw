@@ -57,9 +57,7 @@ def load_stock_dicts():
     try:
         dl_info = DataLoader()
         info_df = dl_info.taiwan_stock_info()
-        # 字典 1：代號找名稱 (例如 '2330' -> '台積電')
         id_to_name = dict(zip(info_df['stock_id'].astype(str), info_df['stock_name']))
-        # 字典 2：名稱找代號 (例如 '台積電' -> '2330')
         name_to_id = dict(zip(info_df['stock_name'], info_df['stock_id'].astype(str)))
         return id_to_name, name_to_id
     except Exception as e:
@@ -72,13 +70,17 @@ def color_num(val):
     elif val < 0: return f"<span class='text-green'>{val:,.0f}</span>"
     else: return "0"
 
+try:
+    FINMIND_TOKEN = st.secrets["FINMIND_TOKEN"]
+except:
+    FINMIND_TOKEN = "" 
+
 # ==========================================
 # 2. 上方橫式控制列
 # ==========================================
 col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1.5, 1.5, 6])
 
 with col_ctrl1:
-    # ✨ 這裡把 Placeholder 提示字改成了可以輸入中文
     raw_input = st.text_input("搜尋", "6269", label_visibility="collapsed", placeholder="輸入代號或中文名稱 (如: 6269 或 台郡)")
 with col_ctrl2:
     analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
@@ -89,17 +91,13 @@ with col_ctrl3:
 # 3. 核心運算引擎
 # ==========================================
 if analyze_btn or raw_input:
-    # ✨ 智慧字串解析邏輯
-    search_term = str(raw_input).strip() # 去除前後空白
+    search_term = str(raw_input).strip() 
     
     if search_term in stock_dict:
-        # 如果使用者輸入的是數字代號 (例如 2330)
         raw_ticker = search_term
     elif search_term in name_to_id_dict:
-        # 如果使用者輸入的是中文名稱 (例如 台積電)，自動轉換成代號
         raw_ticker = name_to_id_dict[search_term]
     else:
-        # 如果找不到，就預設直接拿使用者的輸入去查 (防呆機制)
         raw_ticker = search_term
 
     ticker_yf = f"{raw_ticker}.TW"
@@ -111,10 +109,12 @@ if analyze_btn or raw_input:
             # --- [技術面] ---
             stock = yf.Ticker(ticker_yf)
             df_full = stock.history(period="1y")
-            if df_full.empty:
-                df_full = yf.Ticker(f"{raw_ticker}.TWO").history(period="1y")
-            df_full.index = df_full.index.tz_localize(None)
             
+            # ✨ 修正：嚴謹防呆機制，若資料筆數不足以計算月線，強制切換上櫃 (.TWO) 搜尋
+            if len(df_full) < 20:
+                df_full = yf.Ticker(f"{raw_ticker}.TWO").history(period="1y")
+                
+            df_full.index = df_full.index.tz_localize(None)
             df_full['Volume'] = df_full['Volume'] / 1000
             
             high_52w = df_full['High'].max()
@@ -167,6 +167,9 @@ if analyze_btn or raw_input:
 
             # --- [籌碼面] ---
             dl = DataLoader()
+            if FINMIND_TOKEN:
+                dl.login_by_token(api_token=FINMIND_TOKEN)
+                
             end_date = datetime.date.today()
             start_date = end_date - datetime.timedelta(days=45)
             df_chip = dl.taiwan_stock_institutional_investors(stock_id=raw_ticker, start_date=str(start_date), end_date=str(end_date))
