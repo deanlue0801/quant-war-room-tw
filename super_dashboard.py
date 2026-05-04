@@ -114,7 +114,7 @@ def fetch_chip_data(ticker, start, end, token):
 col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1.5, 1.5, 6])
 
 with col_ctrl1:
-    raw_input = st.text_input("搜尋", "2408", label_visibility="collapsed", placeholder="輸入代號或中文名稱")
+    raw_input = st.text_input("搜尋", "6269", label_visibility="collapsed", placeholder="輸入代號或中文名稱")
 with col_ctrl2:
     analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
 with col_ctrl3:
@@ -181,7 +181,6 @@ if analyze_btn or raw_input:
             sign = "▲" if price_change >= 0 else "▼"
             bias_20 = ((latest_close - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]) * 100
             
-            # ✨ 關鍵價位計算
             price_pressure = df['High'].rolling(20).max().iloc[-1]
             price_support = df['MA20'].iloc[-1]
             price_strong_support = df['Low'].rolling(20).min().iloc[-1]
@@ -190,12 +189,11 @@ if analyze_btn or raw_input:
             date_str = f"{last_date.strftime('%m/%d')}"
             x_dates = df.index.strftime('%m-%d')
 
-            # ✨✨ 智慧趨勢線演算法 (Smart Trendline) ✨✨
-            order = 5 # 抓取轉折點的偵測區間 (前後5天)
+            # ✨✨ 智慧趨勢線演算法 (升級：投影延伸 + 排版修復) ✨✨
+            order = 5 
             local_highs = []
             local_lows = []
             
-            # 掃描出過去所有的 V型低點 和 倒V型高點
             for i in range(order, len(df) - order):
                 if df['High'].iloc[i] == max(df['High'].iloc[i-order:i+order+1]):
                     local_highs.append((i, df['High'].iloc[i]))
@@ -207,29 +205,33 @@ if analyze_btn or raw_input:
             trend_y = []
             trend_color = ""
 
-            # 邏輯判斷：跌破月線代表弱勢，畫「下降壓力線」
             if latest_close < df['MA20'].iloc[-1] and len(local_highs) >= 2:
                 idx1, y1 = local_highs[-2]
                 idx2, y2 = local_highs[-1]
-                if y2 < y1: # 確保高點越來越低
+                if y2 < y1: 
                     slope = (y2 - y1) / (idx2 - idx1)
+                    idx_start = max(0, idx1 - 20) # 往左投影延伸 20 天
                     idx_end = len(df) - 1
+                    y_start = y1 - slope * (idx1 - idx_start)
                     y_end = y2 + slope * (idx_end - idx2)
-                    trend_x = [x_dates[idx1], x_dates[idx_end]]
-                    trend_y = [y1, y_end]
+                    
+                    trend_x = [x_dates[idx_start], x_dates[idx_end]]
+                    trend_y = [y_start, y_end]
                     trend_color = "orange"
                     trendline_type = "下降壓力線"
             
-            # 邏輯判斷：站上月線代表強勢，畫「上升支撐線」 (如果上面沒畫下降線的話)
-            if trendline_type == "無明顯趨勢線" and len(local_lows) >= 2:
+            elif trendline_type == "無明顯趨勢線" and len(local_lows) >= 2:
                 idx1, y1 = local_lows[-2]
                 idx2, y2 = local_lows[-1]
-                if y2 > y1: # 確保低點越來越高
+                if y2 > y1: 
                     slope = (y2 - y1) / (idx2 - idx1)
+                    idx_start = max(0, idx1 - 25) # 往左投影延伸 25 天，展現大波段氣勢
                     idx_end = len(df) - 1
+                    y_start = y1 - slope * (idx1 - idx_start)
                     y_end = y2 + slope * (idx_end - idx2)
-                    trend_x = [x_dates[idx1], x_dates[idx_end]]
-                    trend_y = [y1, y_end]
+                    
+                    trend_x = [x_dates[idx_start], x_dates[idx_end]]
+                    trend_y = [y_start, y_end]
                     trend_color = "yellow"
                     trendline_type = "上升支撐線"
 
@@ -287,7 +289,6 @@ if analyze_btn or raw_input:
             if base_percentile < 20 and df['MACD'].iloc[-1] > df['Signal'].iloc[-1]: win_rate += 10
             win_rate = max(0, min(100, win_rate))
 
-            # ✨ 區間自動判定邏輯
             zone_text = ""
             zone_color_css = ""
             if latest_close >= price_pressure * 0.98:
@@ -316,9 +317,6 @@ if analyze_btn or raw_input:
 
             col_left, col_mid, col_r1, col_r2 = st.columns([1.6, 1.1, 0.85, 0.85])
 
-            # ------------------------------------------
-            # 【第 1 欄：技術面巨幅圖表】
-            # ------------------------------------------
             with col_left:
                 with st.container(border=True):
                     st.markdown('<div class="section-title">技術面與支撐壓力可視化</div>', unsafe_allow_html=True)
@@ -328,22 +326,20 @@ if analyze_btn or raw_input:
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA20'], line=dict(color='cyan', width=1.5), name='MA20(月線)'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA60'], line=dict(color='magenta', width=1), name='MA60(季線)'), row=1, col=1)
                     
-                    # 繪製水平紅綠區塊
                     fig.add_hrect(y0=price_pressure*0.97, y1=price_pressure, line_width=0, fillcolor="red", opacity=0.15, row=1, col=1, 
                                   annotation_text=f"近期高點壓力區 ({price_pressure:.1f})", annotation_position="top left", annotation_font_color="red")
                     fig.add_hrect(y0=price_strong_support, y1=price_support, line_width=0, fillcolor="green", opacity=0.15, row=1, col=1, 
                                   annotation_text=f"強勁支撐區 ({price_strong_support:.1f} - {price_support:.1f})", annotation_position="bottom right", annotation_font_color="lightgreen")
                     
-                    # ✨ 畫上自動化趨勢線
+                    # ✨ 修正後的趨勢線與標註
                     if trend_x:
-                        fig.add_trace(go.Scatter(x=trend_x, y=trend_y, mode='lines', line=dict(color=trend_color, width=2, dash='dashdot'), name=trendline_type), row=1, col=1)
-                        # 加上對話框標註
-                        fig.add_annotation(x=trend_x[-1], y=trend_y[-1], text=f"動態偵測: {trendline_type}", showarrow=True, arrowhead=1, ax=40, ay=0 if trend_color=="yellow" else -20, font=dict(color=trend_color, size=10), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=trend_x, y=trend_y, mode='lines', line=dict(color=trend_color, width=3, dash='dashdot'), name=trendline_type), row=1, col=1)
+                        # 將文字錨點綁在起點，往右上方長，並加上背景色避免看不清楚
+                        fig.add_annotation(x=trend_x[0], y=trend_y[0], text=f" {trendline_type} ", showarrow=True, arrowhead=1, ax=40, ay=-30, font=dict(color=trend_color, size=11), bgcolor="rgba(0,0,0,0.6)", bordercolor=trend_color, borderwidth=1, row=1, col=1)
 
                     colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df.iterrows()]
                     fig.add_trace(go.Bar(x=x_dates, y=df['Volume'], marker_color=colors_vol, name="成交量(張)"), row=2, col=1)
                     
-                    # 成交量動態對話框
                     vol_text = "正常盤整"
                     if price_change > 0 and vol_change_pct > 10: vol_text = "多頭量增價漲"
                     elif price_change > 0 and vol_change_pct < -10: vol_text = "價漲量縮背離"
@@ -373,9 +369,6 @@ if analyze_btn or raw_input:
                 with st.container(border=True):
                     st.markdown(f"<div class='zone-indicator' style='{zone_color_css}'>🎯 目前位階：{zone_text}</div>", unsafe_allow_html=True)
 
-            # ------------------------------------------
-            # 【第 2 欄：籌碼疊加與紅綠明細表】
-            # ------------------------------------------
             with col_mid:
                 with st.container(border=True):
                     st.markdown('<div class="section-title">法人籌碼與股價疊加圖</div>', unsafe_allow_html=True)
@@ -415,9 +408,6 @@ if analyze_btn or raw_input:
                     else:
                         st.warning("查無籌碼資料")
 
-            # ------------------------------------------
-            # 【第 3 欄：黑馬鑑定與勝率】
-            # ------------------------------------------
             with col_r1:
                 with st.container(border=True):
                     st.markdown('<div class="section-title">黑馬潛力雷達</div>', unsafe_allow_html=True)
@@ -441,9 +431,6 @@ if analyze_btn or raw_input:
                     else: base_status = "<span style='color:#FFA500;'>🟡 中基期 (半山腰)</span>"
                     st.markdown(f"<div class='text-sm'>目前位階： <b>{base_percentile:.1f}%</b><br>{base_status}</div>", unsafe_allow_html=True)
 
-            # ------------------------------------------
-            # 【第 4 欄：量價結構與警示】
-            # ------------------------------------------
             with col_r2:
                 with st.container(border=True):
                     st.markdown('<div class="section-title">量價結構</div>', unsafe_allow_html=True)
