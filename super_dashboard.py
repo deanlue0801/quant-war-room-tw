@@ -84,7 +84,7 @@ def color_num(val): return f"<span class='text-red'>+{val:,.0f}</span>" if val >
 c1, c2, c3 = st.columns([1.5, 1.5, 6])
 with c1: raw_input = st.text_input("搜尋", "8091", label_visibility="collapsed")
 with c2: analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
-with c3: st.markdown("<div style='margin-top:8px; color:gray;'><small>※ 搭載 FinMind VIP 引擎，融合經典指標與高階模組</small></div>", unsafe_allow_html=True)
+with c3: st.markdown("<div style='margin-top:8px; color:gray;'><small>※ 滿版四欄架構，搭載高階演算法與修正補丁</small></div>", unsafe_allow_html=True)
 
 # ==========================================
 # 3. 核心運算引擎
@@ -95,7 +95,7 @@ if analyze_btn or raw_input:
     stock_name = stock_dict.get(raw_ticker, "")
     display_title = f"{raw_ticker} {stock_name}" if stock_name else raw_ticker
     
-    with st.spinner(f'鎖定目標 [{display_title}] ... 高階模組運算中...'):
+    with st.spinner(f'鎖定目標 [{display_title}] ... 戰情解析中...'):
         try:
             # --- 技術面計算 ---
             df_full = fetch_tech_data_finmind(raw_ticker, FINMIND_TOKEN).copy()
@@ -152,7 +152,6 @@ if analyze_btn or raw_input:
             start_date = end_date - datetime.timedelta(days=150)
             df_chip = fetch_chip_data(raw_ticker, str(start_date), str(end_date), FINMIND_TOKEN).copy()
             
-            # 🐛 修正點：補齊 chip_sum_5 的字典結構
             chip_sum_10 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
             chip_sum_5 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0} 
             today_chip = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
@@ -174,7 +173,7 @@ if analyze_btn or raw_input:
                     
                     for k in ['外資', '投信', '自營商']:
                         chip_sum_10[k] = safe_sum(last_10, k)
-                        chip_sum_5[k] = safe_sum(last_5, k) # 🐛 修正點：計算 5 日各法人資料
+                        chip_sum_5[k] = safe_sum(last_5, k) 
                         today_chip[k] = safe_sum(last_1, k)
                     chip_sum_10['合計'] = safe_sum(last_10, '三大法人合計')
                     chip_sum_5['合計'] = safe_sum(last_5, '三大法人合計')
@@ -219,8 +218,12 @@ if analyze_btn or raw_input:
             bull_div = df['Close'].iloc[-1] < df['Close'].iloc[-20:-1].min() and df['RSI'].iloc[-1] > df['RSI'].iloc[-20:-1].min()
             squeeze = df['BB_Width'].iloc[-1] < df['BB_Width'].rolling(60).min().iloc[-2] * 1.1
 
+            price_pressure = df['High'].rolling(20).max().iloc[-1]
+            price_support = df['MA20'].iloc[-1]
+            price_strong_support = df['Low'].rolling(20).min().iloc[-1]
+
             # ==========================================
-            # 4. 畫面渲染 UI
+            # 4. 畫面渲染 UI (滿版四欄，無分頁)
             # ==========================================
             if black_horse_score == 4:
                 st.markdown("<div class='s-class-horse'>🔥 S 級黑馬訊號發動：量價籌碼完美共振！ 🔥</div>", unsafe_allow_html=True)
@@ -234,21 +237,25 @@ if analyze_btn or raw_input:
             st.markdown(f"<div class='text-sm' style='margin-bottom: 5px;'>收盤 <span style='color:{color}; font-weight:bold;'>{latest_close:.2f}</span> &nbsp;&nbsp; 漲跌 <span style='color:{color};'>{sign} {abs(price_change):.2f} ({change_pct:.2f}%)</span> &nbsp;&nbsp; | &nbsp;&nbsp; 成交量 <b>{latest_vol:,.0f}</b> 張</div>", unsafe_allow_html=True)
             st.markdown("<hr style='margin: 0 0 10px 0; padding: 0;'>", unsafe_allow_html=True)
             
-            tab1, tab2, tab3 = st.tabs(["📊 核心戰情與勝率", "🕵️ 籌碼透視 (法人vs散戶)", "🚀 高階型態 (VPVR/通道)"])
-            
-            # --------- TAB 1: 核心戰情 (經典回歸) ---------
-            with tab1:
-                col_l, col_r1, col_r2 = st.columns([2.5, 1, 1])
-                with col_l:
+            # --- 經典滿版四欄佈局 ---
+            col_left, col_mid, col_r1, col_r2 = st.columns([1.6, 1.1, 0.85, 0.85])
+
+            # ------------------------------------------
+            # 【第 1 欄：技術面巨幅圖表】
+            # ------------------------------------------
+            with col_left:
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">技術面分析</div>', unsafe_allow_html=True)
                     fig = make_subplots(rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.015, row_heights=[0.4, 0.15, 0.15, 0.15, 0.15])
+                    
                     fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA20'], line=dict(color='cyan', width=1), name='MA20'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA60'], line=dict(color='magenta', width=1), name='MA60'), row=1, col=1)
                     
-                    colors_vol = ['#FF4B4B' if r['Close']>=r['Open'] else '#00FF00' for i, r in df.iterrows()]
-                    fig.add_trace(go.Bar(x=x_dates, y=df['Volume'], marker_color=colors_vol, name="成交量"), row=2, col=1)
+                    colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df.iterrows()]
+                    fig.add_trace(go.Bar(x=x_dates, y=df['Volume'], marker_color=colors_vol, name="成交量(張)"), row=2, col=1)
                     
-                    colors_macd = ['#FF4B4B' if v>=0 else '#00FF00' for v in df['OSC']]
+                    colors_macd = ['#FF4B4B' if val >= 0 else '#00FF00' for val in df['OSC']]
                     fig.add_trace(go.Bar(x=x_dates, y=df['OSC'], marker_color=colors_macd, name="MACD柱"), row=3, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MACD'], line=dict(color='white', width=1), name='MACD'), row=3, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['Signal'], line=dict(color='yellow', width=1), name='Signal'), row=3, col=1)
@@ -259,122 +266,132 @@ if analyze_btn or raw_input:
                     fig.add_hline(y=20, line_dash="dot", line_color="green", row=4, col=1)
                     
                     fig.add_trace(go.Scatter(x=x_dates, y=df['RSI'], line=dict(color='magenta', width=1), name='RSI'), row=5, col=1)
+                    fig.add_hline(y=70, line_dash="dot", line_color="red", row=5, col=1)
+                    fig.add_hline(y=30, line_dash="dot", line_color="green", row=5, col=1)
                     
-                    # 🐛 修正點：強制將 X 軸設為類別(Category)，防止 Plotly 亂猜年份
+                    # 🐛 修正點：鎖定純文字 X 軸，避免斷層
                     fig.update_xaxes(type='category', nticks=10, showgrid=True, gridwidth=1, gridcolor='#333')
-                    fig.update_layout(height=600, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, template="plotly_dark", showlegend=False)
+                    fig.update_layout(height=520, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
                     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333')
                     st.plotly_chart(fig, use_container_width=True)
+
+                with st.container(border=True):
+                    if latest_close > df['MA20'].iloc[-1] and bias_20 < 8: st.markdown("<div class='stamp-text' style='color:#FF4B4B; border-color:#FF4B4B;'>強勢多頭 (逢回可佈局)</div>", unsafe_allow_html=True)
+                    elif bias_20 >= 8: st.markdown("<div class='stamp-text' style='color:#FFA500; border-color:#FFA500;'>短線過熱 (乖離偏高)</div>", unsafe_allow_html=True)
+                    else: st.markdown("<div class='stamp-text' style='color:#00FF00; border-color:#00FF00;'>弱勢空頭 (嚴控風險)</div>", unsafe_allow_html=True)
+
+            # ------------------------------------------
+            # 【第 2 欄：籌碼疊加與紅綠明細表】
+            # ------------------------------------------
+            with col_mid:
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">法人籌碼與主力成本疊加</div>', unsafe_allow_html=True)
+                    if not df_chip.empty:
+                        last_20_chips = pivot_df.tail(20)
+                        chip_dates = last_20_chips.index.strftime('%m-%d')
+                        
+                        fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
+                        
+                        # 顯示紅綠柱與散戶熱度
+                        fig_chip.add_trace(go.Bar(x=chip_dates, y=df['Inst_Net'].tail(20), name='三大法人淨買賣', marker_color=['#FF4B4B' if v>=0 else '#00FF00' for v in df['Inst_Net'].tail(20)]), secondary_y=False)
+                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=df['Retail_Net'].tail(20), name='散戶熱度', line=dict(color='#8ab4f8', width=2)), secondary_y=False)
+                        
+                        # 疊加收盤價與法人成本線 (黃點)
+                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=df['Close'].tail(20), name='收盤價', line=dict(color='rgba(255,255,255,0.3)', width=1)), secondary_y=True)
+                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=df['Inst_Cost'].tail(20), name='法人波段成本', mode='markers', marker=dict(color='yellow', size=4)), secondary_y=True)
+                        
+                        fig_chip.update_layout(
+                            height=200, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
+                            barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(size=10))
+                        )
+                        fig_chip.update_xaxes(type='category', nticks=6, showgrid=False) # 鎖定X軸
+                        fig_chip.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333', secondary_y=False)
+                        fig_chip.update_yaxes(showgrid=False, secondary_y=True)
+                        st.plotly_chart(fig_chip, use_container_width=True)
+                        
+                        html_table = f"""
+                        <table class="chip-table">
+                            <tr><th></th><th>外資</th><th>投信</th><th>自營商</th><th>合計</th></tr>
+                            <tr><td class="row-title">今日</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['自營商'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
+                            <tr><td class="row-title">近5日</td><td>{color_num(chip_sum_5['外資'])}</td><td>{color_num(chip_sum_5['投信'])}</td><td>{color_num(chip_sum_5['自營商'])}</td><td>{color_num(chip_sum_5['合計'])}</td></tr>
+                            <tr><td class="row-title">近10日</td><td>{color_num(chip_sum_10['外資'])}</td><td>{color_num(chip_sum_10['投信'])}</td><td>{color_num(chip_sum_10['自營商'])}</td><td>{color_num(chip_sum_10['合計'])}</td></tr>
+                        </table>
+                        """
+                        st.markdown(html_table, unsafe_allow_html=True)
+                        
+                        st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
+                        st.markdown('<div class="section-title" style="font-size:0.9em; border:none; margin-bottom:0;">主力進出分析 (近10日多空)</div>', unsafe_allow_html=True)
+                        col_c1, col_c2 = st.columns(2)
+                        col_c1.markdown(f"<div class='text-sm'>今日主力動向</div><div class='metric-value'>{color_num(today_chip['合計'])}</div>", unsafe_allow_html=True)
+                        col_c2.markdown(f"<div class='text-sm'>10日波段籌碼</div><div class='metric-value'>{color_num(chip_sum_10['合計'])}</div>", unsafe_allow_html=True)
+                    else:
+                        st.warning("查無籌碼資料")
                 
-                with col_r1:
-                    with st.container(border=True):
-                        st.markdown('<div class="section-title">短線進場勝率</div>', unsafe_allow_html=True)
-                        fig_gauge = go.Figure(go.Indicator(
-                            mode = "gauge+number", value = win_rate, number={'suffix': "%", 'font':{'size': 24}},
-                            domain = {'x': [0, 1], 'y': [0, 1]},
-                            gauge = {'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "white"}, 'bar': {'color': "white", 'thickness': 0.2},
-                                     'steps': [{'range': [0, 40], 'color': "#FF4B4B"}, {'range': [40, 60], 'color': "#FFA500"}, {'range': [60, 100], 'color': "#00FF00"}]}
-                        ))
-                        fig_gauge.update_layout(height=130, margin=dict(l=5, r=5, t=5, b=5), paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
-                        st.plotly_chart(fig_gauge, use_container_width=True)
-                    
-                    with st.container(border=True):
-                        st.markdown('<div class="section-title">黑馬潛力雷達</div>', unsafe_allow_html=True)
-                        if len(bh_reasons) > 0:
-                            for reason in bh_reasons: st.markdown(f"<div class='text-sm'>{reason}</div>", unsafe_allow_html=True)
-                        else: st.markdown("<div class='text-sm'>⏳ 尚未浮現攻擊訊號</div>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">可能路徑與鐵板價</div>', unsafe_allow_html=True)
+                    target_up = price_pressure * 1.05
+                    st.markdown(f"<div class='text-sm'>❶ <b>突破：</b> <span style='color:#FF4B4B;'>{price_pressure:.1f}</span> ➜ <span style='color:#FF4B4B;'>{target_up:.1f}</span><br>❷ <b>回測：</b> <span style='color:#00FF00;'>{latest_close*0.97:.1f}</span> ➜ <span style='color:#00FF00;'>{price_support:.1f}</span><br>❸ <b>VPVR 鐵板密集區：</b> <span style='color:yellow;'>{poc_price:.1f}</span></div>", unsafe_allow_html=True)
 
-                    with st.container(border=True):
-                        st.markdown('<div class="section-title">量價結構</div>', unsafe_allow_html=True)
-                        if price_change > 0 and vol_change_pct > 10: st.markdown("<div class='text-sm'>⚠️ <b>健康上漲</b><br>價漲量增，多方強勢。</div>", unsafe_allow_html=True)
-                        elif price_change > 0 and vol_change_pct < -10: st.markdown("<div class='text-sm title-red'>🚨 <b>量價背離</b><br>價漲量縮，追價意願不足。</div>", unsafe_allow_html=True)
-                        elif price_change < 0 and vol_change_pct > 10: st.markdown("<div class='text-sm title-red'>🚨 <b>殺盤恐慌</b><br>價跌量增，賣壓沉重。</div>", unsafe_allow_html=True)
-                        else: st.markdown("<div class='text-sm'>✅ <b>正常盤整</b><br>無明顯背離跡象。</div>", unsafe_allow_html=True)
+            # ------------------------------------------
+            # 【第 3 欄：黑馬鑑定與勝率】
+            # ------------------------------------------
+            with col_r1:
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">黑馬潛力雷達</div>', unsafe_allow_html=True)
+                    if len(bh_reasons) > 0:
+                        for reason in bh_reasons: st.markdown(f"<div class='text-sm'>{reason}</div>", unsafe_allow_html=True)
+                    else: st.markdown("<div class='text-sm'>⏳ 尚未浮現攻擊訊號</div>", unsafe_allow_html=True)
 
-                with col_r2:
-                    with st.container(border=True):
-                        if latest_close > df['MA20'].iloc[-1] and bias_20 < 8: st.markdown("<div class='stamp-text' style='color:#FF4B4B; border-color:#FF4B4B;'>強勢多頭</div>", unsafe_allow_html=True)
-                        elif bias_20 >= 8: st.markdown("<div class='stamp-text' style='color:#FFA500; border-color:#FFA500;'>短線過熱</div>", unsafe_allow_html=True)
-                        else: st.markdown("<div class='stamp-text' style='color:#00FF00; border-color:#00FF00;'>弱勢空頭</div>", unsafe_allow_html=True)
-                    
-                    with st.container(border=True):
-                        st.markdown('<div class="section-title">位階與長線 (近1年)</div>', unsafe_allow_html=True)
-                        if base_percentile < 30: base_status = "<span style='color:#00FF00;'>🟢 低基期 (底部區)</span>"
-                        elif base_percentile > 70: base_status = "<span style='color:#FF4B4B;'>🔴 高基期 (山頂區)</span>"
-                        else: base_status = "<span style='color:#FFA500;'>🟡 中基期 (半山腰)</span>"
-                        st.markdown(f"<div class='text-sm'>目前位階： <b>{base_percentile:.1f}%</b><br>{base_status}</div>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">短線進場勝率</div>', unsafe_allow_html=True)
+                    fig_gauge = go.Figure(go.Indicator(
+                        mode = "gauge+number", value = win_rate, number={'suffix': "%", 'font':{'size': 24}},
+                        domain = {'x': [0, 1], 'y': [0, 1]},
+                        gauge = {'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "white"}, 'bar': {'color': "white", 'thickness': 0.2},
+                                 'steps': [{'range': [0, 40], 'color': "#FF4B4B"}, {'range': [40, 60], 'color': "#FFA500"}, {'range': [60, 100], 'color': "#00FF00"}]}
+                    ))
+                    fig_gauge.update_layout(height=130, margin=dict(l=5, r=5, t=5, b=5), paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+                    st.plotly_chart(fig_gauge, use_container_width=True)
 
-                    with st.container(border=True):
-                        st.markdown('<div class="section-title">關鍵防禦價</div>', unsafe_allow_html=True)
-                        price_pressure = df['High'].rolling(20).max().iloc[-1]
-                        price_support = df['MA20'].iloc[-1]
-                        price_strong_support = df['Low'].rolling(20).min().iloc[-1]
-                        st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線支撐： <b>{price_support:.1f}</b><br>極限支撐： <b>{price_strong_support:.1f}</b></div>", unsafe_allow_html=True)
-
-            # --------- TAB 2: 籌碼透視 ---------
-            with tab2:
-                c2_l, c2_r = st.columns([2.5, 1.2])
-                with c2_l:
-                    st.markdown("💡 **紅柱**代表法人買超，**藍線**代表估算的散戶參與度，**黃點**為法人波段成本線。")
-                    fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
-                    fig_chip.add_trace(go.Bar(x=x_dates, y=df['Inst_Net'], name='三大法人淨買賣', marker_color=['#FF4B4B' if v>=0 else '#00FF00' for v in df['Inst_Net']]), secondary_y=False)
-                    fig_chip.add_trace(go.Scatter(x=x_dates, y=df['Retail_Net'], name='散戶交易熱度', line=dict(color='#8ab4f8', width=2)), secondary_y=False)
-                    fig_chip.add_trace(go.Scatter(x=x_dates, y=df['Inst_Cost'], name='法人成本線', mode='markers', marker=dict(color='yellow', size=4)), secondary_y=True)
-                    fig_chip.add_trace(go.Scatter(x=x_dates, y=df['Close'], name='收盤價', line=dict(color='rgba(255,255,255,0.3)', width=1)), secondary_y=True)
-                    
-                    fig_chip.update_xaxes(type='category', nticks=10, showgrid=False) # 🐛 修正點：籌碼圖也鎖定文字X軸
-                    fig_chip.update_layout(height=450, margin=dict(l=0,r=0,t=0,b=0), template="plotly_dark", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    st.plotly_chart(fig_chip, use_container_width=True)
-                with c2_r:
-                    html_table = f"""
-                    <table class="chip-table">
-                        <tr><th></th><th>外資</th><th>投信</th><th>自營商</th><th>合計</th></tr>
-                        <tr><td class="row-title">今日</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['自營商'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
-                        <tr><td class="row-title">近5日</td><td>{color_num(chip_sum_5['外資'])}</td><td>{color_num(chip_sum_5['投信'])}</td><td>{color_num(chip_sum_5['自營商'])}</td><td>{color_num(chip_sum_5['合計'])}</td></tr>
-                        <tr><td class="row-title">近10日</td><td>{color_num(chip_sum_10['外資'])}</td><td>{color_num(chip_sum_10['投信'])}</td><td>{color_num(chip_sum_10['自營商'])}</td><td>{color_num(chip_sum_10['合計'])}</td></tr>
-                    </table>
-                    """
-                    st.markdown(html_table, unsafe_allow_html=True)
-                    st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
-                    st.markdown('<div class="section-title" style="font-size:0.9em; border:none; margin-bottom:0;">主力進出分析 (近10日多空)</div>', unsafe_allow_html=True)
-                    col_c1, col_c2 = st.columns(2)
-                    col_c1.markdown(f"<div class='text-sm'>今日主力動向</div><div class='metric-value'>{color_num(today_chip['合計'])}</div>", unsafe_allow_html=True)
-                    col_c2.markdown(f"<div class='text-sm'>10日波段籌碼</div><div class='metric-value'>{color_num(chip_sum_10['合計'])}</div>", unsafe_allow_html=True)
-
-            # --------- TAB 3: 高階型態 ---------
-            with tab3:
-                c3_l, c3_r = st.columns([3, 1])
-                with c3_l:
-                    st.markdown("💡 **VPVR (價格成交量分佈)**：右側橫向長條圖代表該價位累積的成交量。最長的那根 (黃虛線) 即為 **POC (鐵板區/主力密集區)**。")
-                    fig_vpvr = go.Figure()
-                    fig_vpvr.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線"))
-                    fig_vpvr.add_trace(go.Scatter(x=x_dates, y=df['BB_Up'], line=dict(color='rgba(255,255,255,0.2)'), name='布林上軌'))
-                    fig_vpvr.add_trace(go.Scatter(x=x_dates, y=df['BB_Dn'], line=dict(color='rgba(255,255,255,0.2)', dash='dot'), name='布林下軌'))
-                    
-                    fig_vpvr.add_trace(go.Bar(x=vpvr['Volume'], y=vpvr['Bin_Center'], orientation='h', xaxis='x2', marker_color='rgba(138,180,248,0.4)', name='VPVR'))
-                    fig_vpvr.add_hline(y=poc_price, line_dash="dash", line_color="yellow", annotation_text="POC 密集區")
-                    
-                    fig_vpvr.update_xaxes(type='category', nticks=10, showgrid=True, gridwidth=1, gridcolor='#333') # 🐛 修正點：高階圖表也鎖定文字X軸
-                    fig_vpvr.update_layout(
-                        height=500, margin=dict(l=0,r=0,t=0,b=0), template="plotly_dark", xaxis_rangeslider_visible=False, showlegend=False,
-                        xaxis2=dict(overlaying='x', side='top', showgrid=False, visible=False)
-                    )
-                    st.plotly_chart(fig_vpvr, use_container_width=True)
-
-                with c3_r:
-                    with st.container(border=True):
-                        st.markdown('<div class="section-title">演算法雷達</div>', unsafe_allow_html=True)
-                        st.markdown(f"**POC 鐵板價：** `{poc_price:.1f}`")
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">位階與長線 (近1年)</div>', unsafe_allow_html=True)
+                    if base_percentile < 30: base_status = "<span style='color:#00FF00;'>🟢 低基期 (底部區)</span>"
+                    elif base_percentile > 70: base_status = "<span style='color:#FF4B4B;'>🔴 高基期 (山頂區)</span>"
+                    else: base_status = "<span style='color:#FFA500;'>🟡 中基期 (半山腰)</span>"
                         
-                        st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
-                        if squeeze: st.markdown("🎯 **布林極度壓縮**<br><span class='text-sm'>帶寬創近期新低，隨時準備大爆發表態！</span>", unsafe_allow_html=True)
-                        else: st.markdown("✅ **通道正常運行**<br><span class='text-sm'>無明顯壓縮跡象。</span>", unsafe_allow_html=True)
-                        
-                        st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
-                        if bear_div: st.markdown("🚨 **高檔頂背離**<br><span class='text-sm text-red'>股價創新高但 RSI 未過高，慎防誘多反轉！</span>", unsafe_allow_html=True)
-                        elif bull_div: st.markdown("🔥 **低檔底背離**<br><span class='text-sm text-green'>股價破底但 RSI 拒絕下跌，可能即將反彈！</span>", unsafe_allow_html=True)
-                        else: st.markdown("✅ **動能健康**<br><span class='text-sm'>無背離異常。</span>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='text-sm'>目前位階： <b>{base_percentile:.1f}%</b><br>{base_status}</div>", unsafe_allow_html=True)
+                    
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">操作建議</div>', unsafe_allow_html=True)
+                    st.markdown("<div class='text-sm'>⭐ 評估追高風險<br>⭐ 等待回測支撐</div>", unsafe_allow_html=True)
+
+            # ------------------------------------------
+            # 【第 4 欄：量價結構與高階警示】
+            # ------------------------------------------
+            with col_r2:
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">量價結構</div>', unsafe_allow_html=True)
+                    if price_change > 0 and vol_change_pct > 10: st.markdown("<div class='text-sm'>⚠️ <b>健康上漲</b><br>價漲量增，多方強勢。</div>", unsafe_allow_html=True)
+                    elif price_change > 0 and vol_change_pct < -10: st.markdown("<div class='text-sm title-red'>🚨 <b>量價背離</b><br>價漲量縮，追價意願不足。</div>", unsafe_allow_html=True)
+                    elif price_change < 0 and vol_change_pct > 10: st.markdown("<div class='text-sm title-red'>🚨 <b>殺盤恐慌</b><br>價跌量增，賣壓沉重。</div>", unsafe_allow_html=True)
+                    else: st.markdown("<div class='text-sm'>✅ <b>正常盤整</b><br>無明顯背離跡象。</div>", unsafe_allow_html=True)
+
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">成交量分析 (張)</div>', unsafe_allow_html=True)
+                    st.markdown(f"<div class='text-sm'>今日： {latest_vol:,.0f}<br>5日均： {avg_vol_5:,.0f}<br>變化： <span style='color:{color};'>{vol_change_pct:+.1f}%</span></div>", unsafe_allow_html=True)
+
+                with st.container(border=True):
+                    st.markdown('<div class="section-title title-red">🚨 演算法警示雷達</div>', unsafe_allow_html=True)
+                    if squeeze: st.markdown("<span class='text-sm text-red'>🎯 布林極度壓縮，隨時表態！</span>", unsafe_allow_html=True)
+                    elif bear_div: st.markdown("<span class='text-sm text-red'>🚨 高檔頂背離，慎防反轉！</span>", unsafe_allow_html=True)
+                    elif bull_div: st.markdown("<span class='text-sm text-green'>🔥 低檔底背離，可能反彈！</span>", unsafe_allow_html=True)
+                    elif base_percentile > 80 and chip_sum_10['合計'] < 0: st.markdown("<span class='text-sm text-red'>高檔基期+法人倒貨，慎防崩跌。</span>", unsafe_allow_html=True)
+                    elif df['K'].iloc[-1] < df['D'].iloc[-1] and df['K'].iloc[-2] >= df['D'].iloc[-2]: st.markdown("<span class='text-sm text-red'>KD 死叉，留意修正。</span>", unsafe_allow_html=True)
+                    else: st.markdown("<span class='text-sm'>✅ 目前無明顯異常出貨訊號。</span>", unsafe_allow_html=True)
+
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">關鍵防禦價</div>', unsafe_allow_html=True)
+                    st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線支撐： <b>{price_support:.1f}</b><br>極限支撐： <b>{price_strong_support:.1f}</b></div>", unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"資料處理發生錯誤：{e}")
-            st.exception(e)
