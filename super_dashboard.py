@@ -84,7 +84,7 @@ def color_num(val): return f"<span class='text-red'>+{val:,.0f}</span>" if val >
 c1, c2, c3 = st.columns([1.5, 1.5, 6])
 with c1: raw_input = st.text_input("搜尋", "8091", label_visibility="collapsed")
 with c2: analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
-with c3: st.markdown("<div style='margin-top:8px; color:gray;'><small>※ 滿版四欄架構，搭載高階演算法與修正補丁</small></div>", unsafe_allow_html=True)
+with c3: st.markdown("<div style='margin-top:8px; color:gray;'><small>※ 時間軸對齊優化版，籌碼日期不再錯亂</small></div>", unsafe_allow_html=True)
 
 # ==========================================
 # 3. 核心運算引擎
@@ -104,7 +104,7 @@ if analyze_btn or raw_input:
                 st.stop()
                 
             df_full.index = df_full.index.tz_localize(None)
-            df_full['Volume'] = df_full['Volume'] / 1000  # 轉成張
+            df_full['Volume'] = df_full['Volume'] / 1000  
             
             latest_close = df_full['Close'].iloc[-1]
             latest_vol = df_full['Volume'].iloc[-1]
@@ -124,20 +124,17 @@ if analyze_btn or raw_input:
             df_full['MA60'] = df_full['Close'].rolling(60).mean()
             bias_20 = ((latest_close - df_full['MA20'].iloc[-1]) / df_full['MA20'].iloc[-1]) * 100
             
-            # BB Band (布林通道)
             df_full['BB_std'] = df_full['Close'].rolling(20).std()
             df_full['BB_Up'] = df_full['MA20'] + (2 * df_full['BB_std'])
             df_full['BB_Dn'] = df_full['MA20'] - (2 * df_full['BB_std'])
             df_full['BB_Width'] = (df_full['BB_Up'] - df_full['BB_Dn']) / df_full['MA20']
             
-            # RSI & MACD
             delta = df_full['Close'].diff()
             df_full['RSI'] = 100 - (100 / (1 + (delta.where(delta > 0, 0).rolling(14).mean() / -delta.where(delta < 0, 0).rolling(14).mean())))
             df_full['MACD'] = df_full['Close'].ewm(span=12).mean() - df_full['Close'].ewm(span=26).mean()
             df_full['Signal'] = df_full['MACD'].ewm(span=9).mean()
             df_full['OSC'] = df_full['MACD'] - df_full['Signal']
             
-            # KD 指標
             low_min = df_full['Low'].rolling(window=9).min()
             high_max = df_full['High'].rolling(window=9).max()
             df_full['RSV'] = 100 * ((df_full['Close'] - low_min) / (high_max - low_min))
@@ -147,7 +144,7 @@ if analyze_btn or raw_input:
             df = df_full.tail(120).copy()
             x_dates = df.index.strftime('%m-%d')
             
-            # --- 籌碼面計算 ---
+            # --- 籌碼面計算 (✨ 徹底解決日期錯位 Bug) ---
             end_date = datetime.date.today()
             start_date = end_date - datetime.timedelta(days=150)
             df_chip = fetch_chip_data(raw_ticker, str(start_date), str(end_date), FINMIND_TOKEN).copy()
@@ -155,29 +152,41 @@ if analyze_btn or raw_input:
             chip_sum_10 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
             chip_sum_5 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0} 
             today_chip = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
-            pivot_df = pd.DataFrame()
             
             if not df_chip.empty:
                 df_chip['買賣超(張)'] = (df_chip['buy'] - df_chip['sell']) / 1000
                 df_chip['法人'] = df_chip['name'].apply(lambda x: '外資' if '外' in str(x) or 'foreign' in str(x).lower() else '投信' if '投' in str(x) or 'trust' in str(x).lower() else '自營商' if '自' in str(x) or 'dealer' in str(x).lower() else '其他')
                 df_chip = df_chip[df_chip['法人'] != '其他']
-                pivot_df = df_chip.pivot_table(index='date', columns='法人', values='買賣超(張)', aggfunc='sum').fillna(0).sort_index()
+                pivot_df = df_chip.pivot_table(index='date', columns='法人', values='買賣超(張)', aggfunc='sum').fillna(0)
                 pivot_df.index = pd.to_datetime(pivot_df.index)
-                pivot_df['三大法人合計'] = pivot_df.sum(axis=1)
                 
-                if len(pivot_df) > 0:
-                    def safe_sum(df_t, col): return df_t[col].sum() if col in df_t.columns else 0
-                    last_10 = pivot_df.tail(10)
-                    last_5 = pivot_df.tail(5)
-                    last_1 = pivot_df.tail(1)
-                    
-                    for k in ['外資', '投信', '自營商']:
-                        chip_sum_10[k] = safe_sum(last_10, k)
-                        chip_sum_5[k] = safe_sum(last_5, k) 
-                        today_chip[k] = safe_sum(last_1, k)
-                    chip_sum_10['合計'] = safe_sum(last_10, '三大法人合計')
-                    chip_sum_5['合計'] = safe_sum(last_5, '三大法人合計')
-                    today_chip['合計'] = safe_sum(last_1, '三大法人合計')
+                # ✨ 核心修復：強制將法人的日曆，對齊 K 線的真實交易日
+                df_chip_aligned = df[['Close']].join(pivot_df, how='left').fillna(0)
+                
+                for k in ['外資', '投信', '自營商']:
+                    if k not in df_chip_aligned.columns: df_chip_aligned[k] = 0
+                        
+                df_chip_aligned['三大法人合計'] = df_chip_aligned['外資'] + df_chip_aligned['投信'] + df_chip_aligned['自營商']
+                
+                # 計算近 n 日時，使用的是真正對齊過的交易日
+                last_10 = df_chip_aligned.tail(10)
+                last_5 = df_chip_aligned.tail(5)
+                last_1 = df_chip_aligned.tail(1)
+                
+                for k in ['外資', '投信', '自營商']:
+                    chip_sum_10[k] = last_10[k].sum()
+                    chip_sum_5[k] = last_5[k].sum() 
+                    today_chip[k] = last_1[k].sum()
+                chip_sum_10['合計'] = last_10['三大法人合計'].sum()
+                chip_sum_5['合計'] = last_5['三大法人合計'].sum()
+                today_chip['合計'] = last_1['三大法人合計'].sum()
+
+                df['Retail_Net'] = df['Volume'] - abs(df_chip_aligned['三大法人合計']) 
+                df['Inst_Net'] = df_chip_aligned['三大法人合計']
+                inst_buy = df['Inst_Net'].where(df['Inst_Net']>0, 0)
+                df['Inst_Cost'] = (df['Close'] * inst_buy).rolling(20).sum() / inst_buy.rolling(20).sum()
+            else:
+                df['Retail_Net'], df['Inst_Net'], df['Inst_Cost'] = df['Volume'], 0, np.nan
 
             # --- 黑馬潛力與勝率算式 ---
             black_horse_score = 0
@@ -198,14 +207,6 @@ if analyze_btn or raw_input:
             win_rate = max(0, min(100, win_rate))
 
             # --- 高階演算法 ---
-            if not pivot_df.empty:
-                df_align = df.join(pivot_df['三大法人合計'], how='left').fillna(0)
-                df['Retail_Net'] = df_align['Volume'] - abs(df_align['三大法人合計']) 
-                df['Inst_Net'] = df_align['三大法人合計']
-                df['Inst_Cost'] = (df['Close'] * df['Inst_Net'].where(df['Inst_Net']>0, 0)).rolling(20).sum() / df['Inst_Net'].where(df['Inst_Net']>0, 0).rolling(20).sum()
-            else:
-                df['Retail_Net'], df['Inst_Net'], df['Inst_Cost'] = df['Volume'], 0, np.nan
-
             min_p, max_p = df['Low'].min(), df['High'].max()
             bins = np.linspace(min_p, max_p, 30)
             df_vpvr = df.copy()
@@ -237,7 +238,6 @@ if analyze_btn or raw_input:
             st.markdown(f"<div class='text-sm' style='margin-bottom: 5px;'>收盤 <span style='color:{color}; font-weight:bold;'>{latest_close:.2f}</span> &nbsp;&nbsp; 漲跌 <span style='color:{color};'>{sign} {abs(price_change):.2f} ({change_pct:.2f}%)</span> &nbsp;&nbsp; | &nbsp;&nbsp; 成交量 <b>{latest_vol:,.0f}</b> 張</div>", unsafe_allow_html=True)
             st.markdown("<hr style='margin: 0 0 10px 0; padding: 0;'>", unsafe_allow_html=True)
             
-            # --- 經典滿版四欄佈局 ---
             col_left, col_mid, col_r1, col_r2 = st.columns([1.6, 1.1, 0.85, 0.85])
 
             # ------------------------------------------
@@ -248,7 +248,6 @@ if analyze_btn or raw_input:
                     st.markdown('<div class="section-title">技術面分析</div>', unsafe_allow_html=True)
                     fig = make_subplots(rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.015, row_heights=[0.4, 0.15, 0.15, 0.15, 0.15])
                     
-                    # 🐛 修正：加上 increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00' 確保紅漲綠跌
                     fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA20'], line=dict(color='cyan', width=1), name='MA20'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=x_dates, y=df['MA60'], line=dict(color='magenta', width=1), name='MA60'), row=1, col=1)
@@ -286,46 +285,43 @@ if analyze_btn or raw_input:
             with col_mid:
                 with st.container(border=True):
                     st.markdown('<div class="section-title">法人籌碼與主力成本疊加</div>', unsafe_allow_html=True)
-                    if not df_chip.empty:
-                        last_20_chips = pivot_df.tail(20)
-                        chip_dates = last_20_chips.index.strftime('%m-%d')
-                        
-                        fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
-                        
-                        # 顯示紅綠柱與散戶熱度
-                        fig_chip.add_trace(go.Bar(x=chip_dates, y=df['Inst_Net'].tail(20), name='三大法人淨買賣', marker_color=['#FF4B4B' if v>=0 else '#00FF00' for v in df['Inst_Net'].tail(20)]), secondary_y=False)
-                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=df['Retail_Net'].tail(20), name='散戶熱度', line=dict(color='#8ab4f8', width=2)), secondary_y=False)
-                        
-                        # 疊加收盤價與法人成本線 (黃點)
-                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=df['Close'].tail(20), name='收盤價', line=dict(color='rgba(255,255,255,0.3)', width=1)), secondary_y=True)
-                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=df['Inst_Cost'].tail(20), name='法人波段成本', mode='markers', marker=dict(color='yellow', size=4)), secondary_y=True)
-                        
-                        fig_chip.update_layout(
-                            height=200, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
-                            barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(size=10))
-                        )
-                        fig_chip.update_xaxes(type='category', nticks=6, showgrid=False)
-                        fig_chip.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333', secondary_y=False)
-                        fig_chip.update_yaxes(showgrid=False, secondary_y=True)
-                        st.plotly_chart(fig_chip, use_container_width=True)
-                        
-                        html_table = f"""
-                        <table class="chip-table">
-                            <tr><th></th><th>外資</th><th>投信</th><th>自營商</th><th>合計</th></tr>
-                            <tr><td class="row-title">今日</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['自營商'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
-                            <tr><td class="row-title">近5日</td><td>{color_num(chip_sum_5['外資'])}</td><td>{color_num(chip_sum_5['投信'])}</td><td>{color_num(chip_sum_5['自營商'])}</td><td>{color_num(chip_sum_5['合計'])}</td></tr>
-                            <tr><td class="row-title">近10日</td><td>{color_num(chip_sum_10['外資'])}</td><td>{color_num(chip_sum_10['投信'])}</td><td>{color_num(chip_sum_10['自營商'])}</td><td>{color_num(chip_sum_10['合計'])}</td></tr>
-                        </table>
-                        """
-                        st.markdown(html_table, unsafe_allow_html=True)
-                        
-                        st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
-                        st.markdown('<div class="section-title" style="font-size:0.9em; border:none; margin-bottom:0;">主力進出分析 (近10日多空)</div>', unsafe_allow_html=True)
-                        col_c1, col_c2 = st.columns(2)
-                        col_c1.markdown(f"<div class='text-sm'>今日主力動向</div><div class='metric-value'>{color_num(today_chip['合計'])}</div>", unsafe_allow_html=True)
-                        col_c2.markdown(f"<div class='text-sm'>10日波段籌碼</div><div class='metric-value'>{color_num(chip_sum_10['合計'])}</div>", unsafe_allow_html=True)
-                    else:
-                        st.warning("查無籌碼資料")
+                    # ✨ 修正：使用 K 線對齊過的最後 20 天日期
+                    x_dates_20 = x_dates[-20:]
+                    
+                    fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
+                    
+                    # 顯示紅綠柱與散戶熱度
+                    fig_chip.add_trace(go.Bar(x=x_dates_20, y=df['Inst_Net'].tail(20), name='三大法人淨買賣', marker_color=['#FF4B4B' if v>=0 else '#00FF00' for v in df['Inst_Net'].tail(20)]), secondary_y=False)
+                    fig_chip.add_trace(go.Scatter(x=x_dates_20, y=df['Retail_Net'].tail(20), name='散戶熱度', line=dict(color='#8ab4f8', width=2)), secondary_y=False)
+                    
+                    # 疊加收盤價與法人成本線 (黃點)
+                    fig_chip.add_trace(go.Scatter(x=x_dates_20, y=df['Close'].tail(20), name='收盤價', line=dict(color='rgba(255,255,255,0.3)', width=1)), secondary_y=True)
+                    fig_chip.add_trace(go.Scatter(x=x_dates_20, y=df['Inst_Cost'].tail(20), name='法人波段成本', mode='markers', marker=dict(color='yellow', size=4)), secondary_y=True)
+                    
+                    fig_chip.update_layout(
+                        height=200, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
+                        barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(size=10))
+                    )
+                    fig_chip.update_xaxes(type='category', nticks=6, showgrid=False)
+                    fig_chip.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333', secondary_y=False)
+                    fig_chip.update_yaxes(showgrid=False, secondary_y=True)
+                    st.plotly_chart(fig_chip, use_container_width=True)
+                    
+                    html_table = f"""
+                    <table class="chip-table">
+                        <tr><th></th><th>外資</th><th>投信</th><th>自營商</th><th>合計</th></tr>
+                        <tr><td class="row-title">今日</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['自營商'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
+                        <tr><td class="row-title">近5日</td><td>{color_num(chip_sum_5['外資'])}</td><td>{color_num(chip_sum_5['投信'])}</td><td>{color_num(chip_sum_5['自營商'])}</td><td>{color_num(chip_sum_5['合計'])}</td></tr>
+                        <tr><td class="row-title">近10日</td><td>{color_num(chip_sum_10['外資'])}</td><td>{color_num(chip_sum_10['投信'])}</td><td>{color_num(chip_sum_10['自營商'])}</td><td>{color_num(chip_sum_10['合計'])}</td></tr>
+                    </table>
+                    """
+                    st.markdown(html_table, unsafe_allow_html=True)
+                    
+                    st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
+                    st.markdown('<div class="section-title" style="font-size:0.9em; border:none; margin-bottom:0;">主力進出分析 (近10日多空)</div>', unsafe_allow_html=True)
+                    col_c1, col_c2 = st.columns(2)
+                    col_c1.markdown(f"<div class='text-sm'>今日主力動向</div><div class='metric-value'>{color_num(today_chip['合計'])}</div>", unsafe_allow_html=True)
+                    col_c2.markdown(f"<div class='text-sm'>10日波段籌碼</div><div class='metric-value'>{color_num(chip_sum_10['合計'])}</div>", unsafe_allow_html=True)
                 
                 with st.container(border=True):
                     st.markdown('<div class="section-title">可能路徑與鐵板價</div>', unsafe_allow_html=True)
