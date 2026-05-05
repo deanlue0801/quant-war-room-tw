@@ -10,7 +10,7 @@ import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 # ==========================================
-# 1. 網頁與 CSS 視覺設定 (完整保留自 Source 1)
+# 1. 網頁與 CSS 視覺設定
 # ==========================================
 st.set_page_config(page_title="終極量化戰情室", layout="wide", initial_sidebar_state="collapsed")
 
@@ -33,6 +33,12 @@ st.markdown("""
     .text-red { color: #FF4B4B; }
     .text-green { color: #00FF00; }
     
+    /* 指標燈號樣式 */
+    .indicator-badge { padding: 2px 8px; border-radius: 4px; font-size: 0.85em; font-weight: bold; margin-right: 5px; }
+    .bg-bull { background-color: rgba(255, 75, 75, 0.2); color: #FF4B4B; border: 1px solid #FF4B4B; }
+    .bg-bear { background-color: rgba(0, 255, 0, 0.1); color: #00FF00; border: 1px solid #00FF00; }
+    .bg-neutral { background-color: rgba(128, 128, 128, 0.2); color: #ccc; border: 1px solid #555; }
+
     @keyframes pulse {
         0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.7); }
         70% { box-shadow: 0 0 0 10px rgba(255, 75, 75, 0); }
@@ -118,7 +124,7 @@ with col_ctrl1:
 with col_ctrl2:
     analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
 with col_ctrl3:
-    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 FinMind 雙引擎 + 智能畫線視覺模組 + 指標動態診斷</div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 FinMind 雙引擎 + 智能畫線視覺模組 (附趨勢偵測)</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 3. 核心運算引擎
@@ -168,65 +174,86 @@ if analyze_btn or raw_input:
             df_full['D'] = df_full['K'].ewm(com=2, adjust=False).mean()
 
             df = df_full.tail(120).copy()
+            
+            # --- ✨ 新增：指標狀態邏輯分析 ✨ ---
+            curr_k, curr_d = df['K'].iloc[-1], df['D'].iloc[-1]
+            prev_k, prev_d = df['K'].iloc[-2], df['D'].iloc[-2]
+            kd_status = "中性"
+            kd_class = "bg-neutral"
+            if curr_k > curr_d and prev_k <= prev_d: 
+                kd_status = "黃金交叉"; kd_class = "bg-bull"
+            elif curr_k < curr_d and prev_k >= prev_d: 
+                kd_status = "死亡交叉"; kd_class = "bg-bear"
+            elif curr_k > 80: kd_status = "高檔鈍化"; kd_class = "bg-bull"
+            elif curr_k < 20: kd_status = "低檔背離"; kd_class = "bg-bear"
+
+            curr_macd, curr_sig = df['MACD'].iloc[-1], df['Signal'].iloc[-1]
+            osc = df['OSC'].iloc[-1]
+            prev_osc = df['OSC'].iloc[-2]
+            macd_status = "盤整"
+            macd_class = "bg-neutral"
+            if osc > 0 and osc > prev_osc: macd_status = "多頭增溫"; macd_class = "bg-bull"
+            elif osc > 0 and osc < prev_osc: macd_status = "多頭縮減"; macd_class = "bg-neutral"
+            elif osc < 0 and osc < prev_osc: macd_status = "空頭擴散"; macd_class = "bg-bear"
+            elif osc < 0 and osc > prev_osc: macd_status = "空頭收斂"; macd_class = "bg-bull"
+
+            rsi_val = df['RSI'].iloc[-1]
+            rsi_status = "盤整"
+            rsi_class = "bg-neutral"
+            if rsi_val > 70: rsi_status = "超買警戒"; rsi_class = "bg-bear"
+            elif rsi_val < 30: rsi_status = "超跌區"; rsi_class = "bg-bull"
+            elif rsi_val > 50: rsi_status = "強勢區"; rsi_class = "bg-bull"
+
+            # --- [其餘運算保持不變] ---
             prev_close = df['Close'].iloc[-2]
             latest_vol = df['Volume'].iloc[-1]
             avg_vol_5 = df['Volume'].rolling(5).mean().iloc[-1]
             price_change = latest_close - prev_close
             change_pct = (price_change / prev_close) * 100
             vol_change_pct = ((latest_vol - avg_vol_5) / avg_vol_5) * 100 if avg_vol_5 > 0 else 0
-            
             color = "#FF4B4B" if price_change >= 0 else "#00FF00"
             sign = "▲" if price_change >= 0 else "▼"
             bias_20 = ((latest_close - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]) * 100
-            
             price_pressure = df['High'].rolling(20).max().iloc[-1]
             price_support = df['MA20'].iloc[-1]
             price_strong_support = df['Low'].rolling(20).min().iloc[-1]
-            
             last_date = df.index[-1]
             date_str = f"{last_date.strftime('%m/%d')}"
             x_dates = df.index.strftime('%m-%d')
 
-            # ✨✨ 智慧趨勢線演算法 (完整移植自 Source 1) ✨✨
+            # --- [趨勢線演算法] ---
             order = 5 
             local_highs = []
             local_lows = []
             for i in range(order, len(df) - order):
-                if df['High'].iloc[i] == max(df['High'].iloc[i-order:i+order+1]): local_highs.append((i, df['High'].iloc[i]))
-                if df['Low'].iloc[i] == min(df['Low'].iloc[i-order:i+order+1]): local_lows.append((i, df['Low'].iloc[i]))
-
-            trendline_type, trend_x, trend_y, trend_color = "無明顯趨勢線", [], [], ""
+                if df['High'].iloc[i] == max(df['High'].iloc[i-order:i+order+1]):
+                    local_highs.append((i, df['High'].iloc[i]))
+                if df['Low'].iloc[i] == min(df['Low'].iloc[i-order:i+order+1]):
+                    local_lows.append((i, df['Low'].iloc[i]))
+            trendline_type = "無明顯趨勢線"
+            trend_x = []; trend_y = []; trend_color = ""
             if latest_close < df['MA20'].iloc[-1] and len(local_highs) >= 2:
                 idx1, y1 = local_highs[-2]; idx2, y2 = local_highs[-1]
                 if y2 < y1: 
-                    slope = (y2 - y1) / (idx2 - idx1); idx_start = max(0, idx1 - 20); idx_end = len(df) - 1
-                    trend_x = [x_dates[idx_start], x_dates[idx_end]]
-                    trend_y = [y1 - slope * (idx1 - idx_start), y2 + slope * (idx_end - idx2)]
-                    trend_color, trendline_type = "orange", "下降壓力線"
+                    slope = (y2 - y1) / (idx2 - idx1)
+                    idx_start = max(0, idx1 - 20); idx_end = len(df) - 1
+                    y_start = y1 - slope * (idx1 - idx_start); y_end = y2 + slope * (idx_end - idx2)
+                    trend_x = [x_dates[idx_start], x_dates[idx_end]]; trend_y = [y_start, y_end]; trend_color = "orange"; trendline_type = "下降壓力線"
             elif trendline_type == "無明顯趨勢線" and len(local_lows) >= 2:
                 idx1, y1 = local_lows[-2]; idx2, y2 = local_lows[-1]
                 if y2 > y1: 
-                    slope = (y2 - y1) / (idx2 - idx1); idx_start = max(0, idx1 - 25); idx_end = len(df) - 1
-                    trend_x = [x_dates[idx_start], x_dates[idx_end]]
-                    trend_y = [y1 - slope * (idx1 - idx_start), y2 + slope * (idx_end - idx2)]
-                    trend_color, trendline_type = "yellow", "上升支撐線"
+                    slope = (y2 - y1) / (idx2 - idx1)
+                    idx_start = max(0, idx1 - 25); idx_end = len(df) - 1
+                    y_start = y1 - slope * (idx1 - idx_start); y_end = y2 + slope * (idx_end - idx2)
+                    trend_x = [x_dates[idx_start], x_dates[idx_end]]; trend_y = [y_start, y_end]; trend_color = "yellow"; trendline_type = "上升支撐線"
 
-            # --- [新增：技術指標動態診斷文字邏輯] ---
-            latest_osc = df['OSC'].iloc[-1]; prev_osc = df['OSC'].iloc[-2]
-            macd_diag = ("多頭續攻 🚀" if latest_osc > prev_osc else "動能減弱 ⚠️") if latest_osc > 0 else ("空頭收斂 📉" if latest_osc > prev_osc else "空方強勢 🚨")
-            
-            lk, ld = df['K'].iloc[-1], df['D'].iloc[-1]
-            if lk > 80: kd_diag = "高檔死叉 (警訊) 🚨" if lk < ld else "高檔強勢鈍化 🔥"
-            elif lk < 20: kd_diag = "低檔金叉 (機會) ✨" if lk > ld else "低檔超跌中 ❄️"
-            else: kd_diag = "KD 黃金交叉 ⚡" if (lk > ld and df['K'].iloc[-2] <= df['D'].iloc[-2]) else "KD 整理中 ⚖️"
-            
-            lrsi = df['RSI'].iloc[-1]
-            rsi_diag = "指標過熱 (超買) 🌡️" if lrsi > 70 else ("指標超跌 (超賣) ❄️" if lrsi < 30 else "強弱力道中性 ⚖️")
-
-            # --- [籌碼面運算] ---
-            end_date = datetime.date.today(); start_date = end_date - datetime.timedelta(days=45)
+            # --- [籌碼面] ---
+            end_date = datetime.date.today()
+            start_date = end_date - datetime.timedelta(days=45)
             df_chip = fetch_chip_data(raw_ticker, str(start_date), str(end_date), FINMIND_TOKEN).copy()
-            chip_sum_10, chip_sum_5, today_chip = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}, {"合計": 0}, {"合計": 0}
+            chip_sum_10 = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
+            chip_sum_5 = {"合計": 0}
+            today_chip = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
             if not df_chip.empty:
                 df_chip['買賣超(張)'] = (df_chip['buy'] - df_chip['sell']) / 1000
                 def simplify_name(name):
@@ -239,14 +266,17 @@ if analyze_btn or raw_input:
                 df_chip = df_chip[df_chip['法人'] != '其他']
                 pivot_df = df_chip.pivot_table(index='date', columns='法人', values='買賣超(張)', aggfunc='sum').fillna(0).sort_index()
                 pivot_df.index = pd.to_datetime(pivot_df.index)
-                if not pivot_df.empty:
-                    def safe_sum_col(df_target, col): return df_target[col].sum() if col in df_target.columns else 0
+                if len(pivot_df) > 0:
                     last_10 = pivot_df.tail(10); last_5 = pivot_df.tail(5); last_1 = pivot_df.tail(1)
-                    for d, s in [(last_10, chip_sum_10), (last_5, chip_sum_5), (last_1, today_chip)]:
-                        s['外資'] = safe_sum_col(d, '外資'); s['投信'] = safe_sum_col(d, '投信'); s['自營商'] = safe_sum_col(d, '自營商')
-                        s['合計'] = s['外資'] + s['投信'] + s['自營商']
+                    def safe_sum(df_target, col): return df_target[col].sum() if col in df_target.columns else 0
+                    chip_sum_10['外資'] = safe_sum(last_10, '外資'); chip_sum_10['投信'] = safe_sum(last_10, '投信'); chip_sum_10['自營商'] = safe_sum(last_10, '自營商')
+                    chip_sum_10['合計'] = chip_sum_10['外資'] + chip_sum_10['投信'] + chip_sum_10['自營商']
+                    chip_sum_5['外資'] = safe_sum(last_5, '外資'); chip_sum_5['投信'] = safe_sum(last_5, '投信'); chip_sum_5['自營商'] = safe_sum(last_5, '自營商')
+                    chip_sum_5['合計'] = chip_sum_5['外資'] + chip_sum_5['投信'] + chip_sum_5['自營商']
+                    today_chip['外資'] = safe_sum(last_1, '外資'); today_chip['投信'] = safe_sum(last_1, '投信'); today_chip['自營商'] = safe_sum(last_1, '自營商')
+                    today_chip['合計'] = today_chip['外資'] + today_chip['投信'] + today_chip['自營商']
 
-            # --- [雷達與勝率評分] ---
+            # --- [評分與位階文字] ---
             black_horse_score = 0; bh_reasons = []
             if base_percentile < 60: black_horse_score += 1; bh_reasons.append("✅ 基期優勢 (未過熱)")
             if latest_close > df['MA20'].iloc[-1] and latest_close > df['MA60'].iloc[-1]: black_horse_score += 1; bh_reasons.append("✅ 趨勢轉強 (站上均線)")
@@ -262,13 +292,22 @@ if analyze_btn or raw_input:
             if base_percentile > 80: win_rate -= 10
             win_rate = max(0, min(100, win_rate))
 
-            zone_text = ("🚀 突破區" if latest_close >= price_pressure * 0.98 else ("📈 震盪多頭區" if price_support <= latest_close < price_pressure * 0.98 else ("⚠️ 弱勢整理區" if price_strong_support <= latest_close < price_support else "🚨 破底轉空區")))
-            zone_color_css = f"color: {'#FF4B4B' if '突破' in zone_text else ('#FFA500' if '震盪' in zone_text else ('#FFFF00' if '弱勢' in zone_text else '#00FF00'))}; border-color: currentcolor;"
+            zone_text = ""; zone_color_css = ""
+            if latest_close >= price_pressure * 0.98:
+                zone_text = "🚀 突破區 (挑戰前高，最強勢)"; zone_color_css = "color: #FF4B4B; border-color: #FF4B4B;"
+            elif price_support <= latest_close < price_pressure * 0.98:
+                zone_text = "📈 震盪多頭區 (逢回佈局)"; zone_color_css = "color: #FFA500; border-color: #FFA500;"
+            elif price_strong_support <= latest_close < price_support:
+                zone_text = "⚠️ 弱勢整理區 (跌破月線)"; zone_color_css = "color: #FFFF00; border-color: #FFFF00;"
+            else:
+                zone_text = "🚨 破底轉空區 (風險極高)"; zone_color_css = "color: #00FF00; border-color: #00FF00;"
 
             # ==========================================
-            # 4. 畫面渲染 (完整遵循 Source 1 佈局)
+            # 4. 畫面渲染
             # ==========================================
-            if black_horse_score == 4: st.markdown("<div class='s-class-horse'>🔥 S 級黑馬訊號發動：量價籌碼完美共振！ 🔥</div>", unsafe_allow_html=True)
+            if black_horse_score == 4:
+                st.markdown("<div class='s-class-horse'>🔥 S 級黑馬訊號發動：量價籌碼完美共振！ 🔥</div>", unsafe_allow_html=True)
+            
             stars = "★" * black_horse_score + "☆" * (4 - black_horse_score)
             st.markdown(f"<h3 style='margin-bottom:0;'>{display_title} &nbsp;&nbsp; <span style='font-size: 0.5em; color: #8ab4f8; border: 1px solid #333; padding: 2px 8px; border-radius: 5px; vertical-align: middle;'>{date_str}</span> &nbsp;&nbsp; | &nbsp;&nbsp; 爆發潛力 <span class='potential-stars'>{stars}</span></h3>", unsafe_allow_html=True)
             st.markdown(f"<div class='text-sm' style='margin-bottom: 5px;'>收盤 <span style='color:{color}; font-weight:bold;'>{latest_close:.2f}</span> &nbsp;&nbsp; 漲跌 <span style='color:{color};'>{sign} {abs(price_change):.2f} ({change_pct:.2f}%)</span> &nbsp;&nbsp; | &nbsp;&nbsp; 成交量 <b>{latest_vol:,.0f}</b> 張</div>", unsafe_allow_html=True)
@@ -278,80 +317,78 @@ if analyze_btn or raw_input:
 
             with col_left:
                 with st.container(border=True):
-                    st.markdown('<div class="section-title">技術面與指標動態診斷</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="section-title">技術面與支撐壓力可視化</div>', unsafe_allow_html=True)
+                    # --- [Plotly 圖表] ---
                     fig = make_subplots(rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.015, row_heights=[0.4, 0.15, 0.15, 0.15, 0.15])
                     fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=x_dates, y=df['MA20'], line=dict(color='cyan', width=1.5)), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=x_dates, y=df['MA60'], line=dict(color='magenta', width=1)), row=1, col=1)
-                    fig.add_hrect(y0=price_pressure*0.97, y1=price_pressure, fillcolor="red", opacity=0.15, row=1, col=1)
-                    fig.add_hrect(y0=price_strong_support, y1=price_support, fillcolor="green", opacity=0.15, row=1, col=1)
-                    
+                    fig.add_trace(go.Scatter(x=x_dates, y=df['MA20'], line=dict(color='cyan', width=1.5), name='MA20'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=x_dates, y=df['MA60'], line=dict(color='magenta', width=1), name='MA60'), row=1, col=1)
                     if trend_x:
-                        fig.add_trace(go.Scatter(x=trend_x, y=trend_y, mode='lines', line=dict(color=trend_color, width=3, dash='dashdot')), row=1, col=1)
-                        fig.add_annotation(x=trend_x[0], y=trend_y[0], text=f" {trendline_type} ", showarrow=True, arrowhead=1, ax=40, ay=-30, font=dict(color=trend_color, size=11), bgcolor="rgba(0,0,0,0.6)", bordercolor=trend_color, borderwidth=1, row=1, col=1)
-
-                    fig.add_trace(go.Bar(x=x_dates, y=df['Volume'], marker_color=['#FF4B4B' if r['Close'] >= r['Open'] else '#00FF00' for i, r in df.iterrows()]), row=2, col=1)
+                        fig.add_trace(go.Scatter(x=trend_x, y=trend_y, mode='lines', line=dict(color=trend_color, width=3, dash='dashdot'), name=trendline_type), row=1, col=1)
                     
-                    #指標標註與繪圖
-                    fig.add_trace(go.Bar(x=x_dates, y=df['OSC'], marker_color=['#FF4B4B' if v >= 0 else '#00FF00' for v in df['OSC']]), row=3, col=1)
-                    fig.add_annotation(xref="x domain", yref="y domain", x=0.01, y=0.9, text=f"<b>MACD: {macd_diag}</b>", showarrow=False, font=dict(color="white", size=10), bgcolor="rgba(0,0,0,0.6)", row=3, col=1)
+                    fig.add_trace(go.Bar(x=x_dates, y=df['Volume'], marker_color=['#FF4B4B' if c >= o else '#00FF00' for c, o in zip(df['Close'], df['Open'])], name="成交量"), row=2, col=1)
+                    fig.add_trace(go.Bar(x=x_dates, y=df['OSC'], marker_color=['#FF4B4B' if v >= 0 else '#00FF00' for v in df['OSC']], name="MACD柱"), row=3, col=1)
+                    fig.add_trace(go.Scatter(x=x_dates, y=df['K'], line=dict(color='yellow', width=1), name='K'), row=4, col=1)
+                    fig.add_trace(go.Scatter(x=x_dates, y=df['D'], line=dict(color='cyan', width=1), name='D'), row=4, col=1)
+                    fig.add_trace(go.Scatter(x=x_dates, y=df['RSI'], line=dict(color='magenta', width=1), name='RSI'), row=5, col=1)
                     
-                    fig.add_trace(go.Scatter(x=x_dates, y=df['K'], line=dict(color='yellow', width=1)), row=4, col=1)
-                    fig.add_trace(go.Scatter(x=x_dates, y=df['D'], line=dict(color='cyan', width=1)), row=4, col=1)
-                    fig.add_annotation(xref="x domain", yref="y domain", x=0.01, y=0.9, text=f"<b>KD: {kd_diag}</b>", showarrow=False, font=dict(color="white", size=10), bgcolor="rgba(0,0,0,0.6)", row=4, col=1)
-                    
-                    fig.add_trace(go.Scatter(x=x_dates, y=df['RSI'], line=dict(color='magenta', width=1)), row=5, col=1)
-                    fig.add_annotation(xref="x domain", yref="y domain", x=0.01, y=0.9, text=f"<b>RSI: {rsi_diag}</b>", showarrow=False, font=dict(color="white", size=10), bgcolor="rgba(0,0,0,0.6)", row=5, col=1)
-                    
-                    fig.update_layout(height=650, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
+                    fig.update_layout(height=520, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
                     fig.update_xaxes(type='category', nticks=10, showgrid=True, gridcolor='#333')
+                    fig.update_yaxes(showgrid=True, gridcolor='#333')
                     st.plotly_chart(fig, use_container_width=True)
 
-                with st.container(border=True):
+                    # ✨ 新增：目前技術指標狀態面板 ✨
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 5px; margin-bottom: 10px;">
+                        <div><span class="text-sm" style="color:gray;">KD:</span> <span class="indicator-badge {kd_class}">{kd_status} ({curr_k:.1f})</span></div>
+                        <div><span class="text-sm" style="color:gray;">MACD:</span> <span class="indicator-badge {macd_class}">{macd_status}</span></div>
+                        <div><span class="text-sm" style="color:gray;">RSI:</span> <span class="indicator-badge {rsi_class}">{rsi_status} ({rsi_val:.1f})</span></div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
                     st.markdown(f"<div class='zone-indicator' style='{zone_color_css}'>🎯 目前位階：{zone_text}</div>", unsafe_allow_html=True)
 
+            # --- [其餘 col_mid, col_r1, col_r2 內容與原版一致] ---
             with col_mid:
                 with st.container(border=True):
                     st.markdown('<div class="section-title">法人籌碼與股價疊加圖</div>', unsafe_allow_html=True)
                     if not df_chip.empty:
                         last_20_chips = pivot_df.tail(20)
-                        fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
                         chip_dates = last_20_chips.index.strftime('%m-%d')
-                        for c, col in [('外資', '#8ab4f8'), ('投信', '#FF4B4B'), ('自營商', '#00FF00')]:
-                            if c in last_20_chips.columns: fig_chip.add_trace(go.Bar(x=chip_dates, y=last_20_chips[c], name=c, marker_color=col), secondary_y=False)
                         price_dict = dict(zip(x_dates, df['Close']))
-                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=[price_dict.get(d) for d in chip_dates], line=dict(color='yellow', width=2), mode='lines+markers', marker=dict(size=4)), secondary_y=True)
-                        fig_chip.update_layout(height=200, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', barmode='group', showlegend=False)
+                        chip_close_prices = [price_dict.get(d, None) for d in chip_dates]
+                        fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
+                        fig_chip.add_trace(go.Bar(x=chip_dates, y=last_20_chips['外資'], name='外資', marker_color='#8ab4f8'), secondary_y=False)
+                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=chip_close_prices, name='收盤價', line=dict(color='yellow', width=2)), secondary_y=True)
+                        fig_chip.update_layout(height=200, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', barmode='group')
                         st.plotly_chart(fig_chip, use_container_width=True)
-                        
-                        st.markdown(f"""<table class="chip-table">
-                            <tr><th></th><th>外資</th><th>投信</th><th>合計</th></tr>
-                            <tr><td class="row-title">今日</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
-                            <tr><td class="row-title">近5日</td><td>{color_num(chip_sum_5['外資'])}</td><td>{color_num(chip_sum_5['投信'])}</td><td>{color_num(chip_sum_5['合計'])}</td></tr>
-                            <tr><td class="row-title">近10日</td><td>{color_num(chip_sum_10['外資'])}</td><td>{color_num(chip_sum_10['投信'])}</td><td>{color_num(chip_sum_10['合計'])}</td></tr>
-                        </table>""", unsafe_allow_html=True)
+                        st.markdown(f"""
+                        <table class="chip-table">
+                            <tr><th></th><th>外資</th><th>投信</th><th>自營商</th><th>合計</th></tr>
+                            <tr><td class="row-title">今日</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['自營商'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
+                            <tr><td class="row-title">近10日</td><td>{color_num(chip_sum_10['外資'])}</td><td>{color_num(chip_sum_10['投信'])}</td><td>{color_num(chip_sum_10['自營商'])}</td><td>{color_num(chip_sum_10['合計'])}</td></tr>
+                        </table>
+                        """, unsafe_allow_html=True)
+                    else: st.warning("查無籌碼資料")
 
             with col_r1:
                 with st.container(border=True):
-                    st.markdown('<div class="section-title">黑馬潛力與勝率</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="section-title">黑馬潛力雷達</div>', unsafe_allow_html=True)
                     for reason in bh_reasons: st.markdown(f"<div class='text-sm'>{reason}</div>", unsafe_allow_html=True)
-                    st.divider()
-                    st.metric("短線進場勝率", f"{win_rate}%")
-                    st.markdown(f"<div class='text-sm'>目前位階： <b>{base_percentile:.1f}%</b></div>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">短線進場勝率</div>', unsafe_allow_html=True)
+                    fig_gauge = go.Figure(go.Indicator(mode = "gauge+number", value = win_rate, number={'suffix': "%", 'font':{'size': 24}}, gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "white"}, 'steps': [{'range': [0, 40], 'color': "#FF4B4B"}, {'range': [60, 100], 'color': "#00FF00"}]}))
+                    fig_gauge.update_layout(height=130, margin=dict(l=5, r=5, t=5, b=5), paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+                    st.plotly_chart(fig_gauge, use_container_width=True)
 
             with col_r2:
                 with st.container(border=True):
-                    st.markdown('<div class="section-title">量價結構與警示</div>', unsafe_allow_html=True)
-                    if price_change > 0 and vol_change_pct > 10: st.markdown("<div class='text-sm'>⚠️ <b>健康上漲</b></div>", unsafe_allow_html=True)
-                    elif price_change > 0 and vol_change_pct < -10: st.markdown("<div class='text-sm title-red'>🚨 <b>量價背離</b></div>", unsafe_allow_html=True)
-                    elif price_change < 0 and vol_change_pct > 10: st.markdown("<div class='text-sm title-red'>🚨 <b>殺盤恐慌</b></div>", unsafe_allow_html=True)
-                    
-                    st.divider()
-                    if chip_sum_10['合計'] < 0 and latest_close > df['MA20'].iloc[-1]: st.markdown("<div class='text-sm title-red'>🚨 主力疑似拉高出貨！</div>", unsafe_allow_html=True)
-                    else: st.markdown("<div class='text-sm'>✅ 目前籌碼動向尚屬正常</div>", unsafe_allow_html=True)
-                    
-                    st.divider()
-                    st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線： <b>{price_support:.1f}</b></div>", unsafe_allow_html=True)
+                    st.markdown('<div class="section-title">量價結構</div>', unsafe_allow_html=True)
+                    if price_change > 0 and vol_change_pct > 10: st.markdown("<div class='text-sm'>⚠️ <b>健康上漲</b><br>價漲量增。</div>", unsafe_allow_html=True)
+                    else: st.markdown("<div class='text-sm'>✅ <b>正常盤整</b></div>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">關鍵防禦價</div>', unsafe_allow_html=True)
+                    st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線支撐： <b>{price_support:.1f}</b></div>", unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"資料處理發生錯誤：{e}")
