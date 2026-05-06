@@ -87,7 +87,6 @@ def fetch_tech_data_fugle(ticker):
     try:
         client = RestClient(api_key=FUGLE_API_KEY)
         
-        # 1. 抓取歷史日 K 線 (近 360 天)
         end_date = datetime.date.today()
         start_date = end_date - datetime.timedelta(days=360)
         
@@ -108,18 +107,13 @@ def fetch_tech_data_fugle(ticker):
         else:
             df = pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'])
             
-        # 2. 強制抓取今日即時報價並合併 
         try:
             quote = client.stock.intraday.quote(symbol=ticker)
             
-            # Fugle API v1.0 直接提取
             close_p = quote.get('closePrice')
-            
-            # 若收盤價為 None (可能還沒成交)，嘗試抓 lastTrade
             if close_p is None:
                 close_p = (quote.get('lastTrade') or {}).get('price')
 
-            # 防呆：舊版 v0.3 備案 vs v1.0 解析
             if close_p is None:
                 q_old = quote.get('data', {}).get('quote', {})
                 close_p = (q_old.get('trade') or {}).get('price')
@@ -135,11 +129,8 @@ def fetch_tech_data_fugle(ticker):
             
             if close_p is not None:
                 today_ts = pd.Timestamp(end_date)
-                
-                # 核心修復：Fugle 盤中 API 的成交量單位是「張」，必須 *1000 轉換為「股」
                 vol_shares = vol_lots * 1000
                 
-                # 如果歷史資料的最後一天不是今天，就強制合併今天的即時報價
                 if df.empty or df.index[-1].date() != end_date:
                     today_df = pd.DataFrame([{
                         'Date': today_ts,
@@ -152,7 +143,6 @@ def fetch_tech_data_fugle(ticker):
                     
                     df = pd.concat([df, today_df])
                 else:
-                    # 如果 API 已經把今天放進歷史資料了，更新最新數值
                     df.loc[today_ts, ['Open', 'High', 'Low', 'Close', 'Volume']] = [open_p, high_p, low_p, close_p, vol_shares]
                     
         except Exception as e_intraday:
@@ -552,6 +542,57 @@ if analyze_btn or raw_input:
                 with st.container(border=True):
                     st.markdown('<div class="section-title">關鍵防禦價</div>', unsafe_allow_html=True)
                     st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線支撐： <b>{price_support:.1f}</b><br>極限支撐： <b>{price_strong_support:.1f}</b></div>", unsafe_allow_html=True)
+
+            # ==========================================
+            # ✨ 新增：法人明日劇本推演模組 (動態預判) ✨
+            # ==========================================
+            script_title = "盤整觀察"
+            script_color = "#FFA500"
+            script_actions = []
+
+            # 判斷邏輯變數設定
+            is_red_candle = df['Close'].iloc[-1] > df['Open'].iloc[-1]
+            is_volume_burst = latest_vol > (avg_vol_5 * 1.5)
+            # 若五日總計大於零，判斷今天買超是否佔極高比例 (隔日沖特徵)
+            is_sudden_buy = today_chip['合計'] > (chip_sum_5['合計'] * 0.8) if chip_sum_5['合計'] > 0 else today_chip['合計'] > 0
+            
+            st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
+
+            # 劇本 1：隔日沖倒貨預警
+            if is_red_candle and is_volume_burst and is_sudden_buy and today_chip['合計'] > 0:
+                script_title = "⚠️ 隔日沖警戒 (提防開高走低)"
+                script_color = "#FFFF00"
+                script_actions.append("👉 <b>籌碼特徵</b>：今日爆量收紅，且法人買盤高度集中於單日，極高機率夾帶隔日沖分點進駐。")
+                script_actions.append("👉 <b>明日對策</b>：早盤若跳空開高切勿盲目追價，提防 9:30 前的獲利了結賣壓出籠。若早盤爆量下殺應先觀望；待 11:00 後量縮且守穩今日收盤價一半之上，再考慮切入。")
+            
+            # 劇本 2：投信連續作多波段
+            elif chip_sum_5['投信'] > 0 and today_chip['投信'] > 0 and latest_close > df['MA20'].iloc[-1]:
+                script_title = "🔥 投信波段發動 (順勢偏多)"
+                script_color = "#FF4B4B"
+                script_actions.append("👉 <b>籌碼特徵</b>：投信籌碼連續進駐，且股價站穩月線之上，具備法人波段保護傘。")
+                script_actions.append(f"👉 <b>明日對策</b>：開平或開小高皆可分批建立基本部位。防守線可設於月線 (<b>{price_support:.1f}</b>) 或今日低點，未跌破前可持股續抱。若明日開盤預估量溫和放大，則攻擊勝率極高。")
+
+            # 劇本 3：法人棄守破線
+            elif latest_close < df['MA20'].iloc[-1] and chip_sum_5['合計'] < 0:
+                script_title = "🚨 籌碼渙散 (弱勢破線)"
+                script_color = "#00FF00"
+                script_actions.append("👉 <b>籌碼特徵</b>：法人波段站在賣方，且股價已落入月線之下，上檔套牢賣壓沉重。")
+                script_actions.append("👉 <b>明日對策</b>：反彈皆是逃命波。明日若逢高觸碰月線或今日高點，應優先減碼。嚴禁在此位階摸底攤平，耐心等待站回月線或出現爆量長紅 K 止跌訊號為止。")
+                
+            # 劇本 4：量縮震盪整理
+            else:
+                script_title = "⚖️ 量縮震盪整理 (等待表態)"
+                script_color = "#8ab4f8"
+                script_actions.append("👉 <b>籌碼特徵</b>：目前籌碼與量價結構無極端異常，處於多空交戰或量縮洗盤階段。")
+                if latest_close > df['MA20'].iloc[-1]:
+                    script_actions.append("👉 <b>明日對策</b>：長線趨勢偏多但短線動能不足。明日開盤若無帶量（預估量不及今日），容易陷入狹幅震盪。建議採取「逢回測均線低吸」策略，切忌追高。")
+                else:
+                    script_actions.append("👉 <b>明日對策</b>：短線趨勢偏弱，明日若帶量下殺將有破底風險。建議多看少做，保留現金實力。")
+
+            with st.container(border=True):
+                st.markdown(f'<div class="section-title" style="color: {script_color}; font-size: 1.15em; border-bottom: 1px solid #555; padding-bottom: 8px;">🔮 法人明日劇本推演：{script_title}</div>', unsafe_allow_html=True)
+                for act in script_actions:
+                    st.markdown(f"<div style='font-size: 0.95em; margin-top: 8px; line-height: 1.5;'>{act}</div>", unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"資料處理發生錯誤：{e}")
