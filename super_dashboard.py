@@ -5,6 +5,7 @@ import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from FinMind.data import DataLoader
+from fugle_marketdata import RestClient 
 import warnings
 
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -50,8 +51,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌟 全新統一 FinMind 快取引擎
+# 🌟 全新統一 FinMind / Fugle 快取引擎
 # ==========================================
+try:
+    FUGLE_API_KEY = st.secrets.get("FUGLE_API_KEY", "")
+except:
+    FUGLE_API_KEY = ""
+
 @st.cache_data(ttl=86400)
 def load_stock_dicts():
     try:
@@ -75,30 +81,88 @@ try:
 except:
     FINMIND_TOKEN = ""
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_tech_data_finmind(ticker, token):
-    dl = DataLoader()
-    if token:
-        try: dl.login_by_token(api_token=token)
-        except: pass
+# ✨ 強制合併版：解決盤中看不到今天 K 棒的問題，並修復「單位陷阱」
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_tech_data_fugle(ticker):
+    try:
+        client = RestClient(api_key=FUGLE_API_KEY)
         
-    end = datetime.date.today()
-    start = end - datetime.timedelta(days=365)
-    df = dl.taiwan_stock_daily(stock_id=str(ticker), start_date=str(start), end_date=str(end))
-    
-    if df.empty:
+        # 1. 抓取歷史日 K 線 (近 360 天) - 這裡的成交量 Fugle 預設單位是「股」
+        end_date = datetime.date.today()
+        start_date = end_date - datetime.timedelta(days=360)
+        
+        kwargs = {
+            "symbol": ticker,
+            "timeframe": "D",
+            "from": start_date.strftime('%Y-%m-%d'),
+            "to": end_date.strftime('%Y-%m-%d')
+        }
+        
+        candles = client.stock.historical.candles(**kwargs)
+        df = pd.DataFrame(candles['data'])
+        
+        if not df.empty:
+            df = df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
+            df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None) 
+            df = df.set_index('Date').sort_index()
+        else:
+            df = pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'])
+            
+        # 2. 強制抓取今日即時報價並合併 
+        try:
+            quote = client.stock.intraday.quote(symbol=ticker)
+            
+            # Fugle API v1.0 直接提取
+            close_p = quote.get('closePrice')
+            
+            # 若收盤價為 None (可能還沒成交)，嘗試抓 lastTrade
+            if close_p is None:
+                close_p = (quote.get('lastTrade') or {}).get('price')
+
+            # 防呆：舊版 v0.3 備案 vs v1.0 解析
+            if close_p is None:
+                q_old = quote.get('data', {}).get('quote', {})
+                close_p = (q_old.get('trade') or {}).get('price')
+                open_p = (q_old.get('priceOpen') or {}).get('price') or close_p
+                high_p = (q_old.get('priceHigh') or {}).get('price') or close_p
+                low_p = (q_old.get('priceLow') or {}).get('price') or close_p
+                vol_lots = (q_old.get('total') or {}).get('tradeVolume', 0)
+            else:
+                open_p = quote.get('openPrice') or close_p
+                high_p = quote.get('highPrice') or close_p
+                low_p = quote.get('lowPrice') or close_p
+                vol_lots = (quote.get('total') or {}).get('tradeVolume', 0)
+            
+            if close_p is not None:
+                today_ts = pd.Timestamp(end_date)
+                
+                # 🎯 核心修復：Fugle 盤中 API 的成交量單位是「張」，必須 *1000 轉換為「股」
+                # 以配合上方歷史資料的結構，並讓主程式統一 / 1000 轉換
+                vol_shares = vol_lots * 1000
+                
+                # 如果歷史資料的最後一天不是今天，就強制合併今天的即時報價
+                if df.empty or df.index[-1].date() != end_date:
+                    today_df = pd.DataFrame([{
+                        'Date': today_ts,
+                        'Open': open_p,
+                        'High': high_p,
+                        'Low': low_p,
+                        'Close': close_p,
+                        'Volume': vol_shares
+                    }]).set_index('Date')
+                    
+                    df = pd.concat([df, today_df])
+                else:
+                    # 如果 API 已經把今天放進歷史資料了，更新最新數值
+                    df.loc[today_ts, ['Open', 'High', 'Low', 'Close', 'Volume']] = [open_p, high_p, low_p, close_p, vol_shares]
+                    
+        except Exception as e_intraday:
+            pass 
+            
+        return df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+    except Exception as e:
+        st.error(f"Fugle API 讀取失敗: {e}")
         return pd.DataFrame()
-        
-    if 'Trading_Volume' in df.columns:
-        df = df.rename(columns={'Trading_Volume': 'Volume'})
-    elif 'capacity' in df.columns:
-        df = df.rename(columns={'capacity': 'Volume'})
-        
-    df = df.rename(columns={'date': 'Date', 'open': 'Open', 'max': 'High', 'min': 'Low', 'close': 'Close'})
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.set_index('Date')
-    
-    return df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_chip_data(ticker, start, end, token):
@@ -118,7 +182,7 @@ with col_ctrl1:
 with col_ctrl2:
     analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
 with col_ctrl3:
-    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 FinMind 雙引擎 + 智能畫線視覺模組 (附趨勢偵測)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 Fugle (盤中即時) + FinMind 雙引擎 + 智能畫線視覺模組</div>", unsafe_allow_html=True)
 
 # ==========================================
 # 3. 核心運算引擎
@@ -132,7 +196,7 @@ if analyze_btn or raw_input:
     with st.spinner(f'鎖定目標 [{display_title}] ... 啟動戰情解析中...'):
         try:
             # --- [技術面] ---
-            df_full = fetch_tech_data_finmind(raw_ticker, FINMIND_TOKEN).copy()
+            df_full = fetch_tech_data_fugle(raw_ticker).copy()
             
             if len(df_full) < 20:
                 st.error(f"🚨 無法取得 [{display_title}] 的有效報價資料。")
@@ -413,16 +477,20 @@ if analyze_btn or raw_input:
                     if not df_chip.empty:
                         last_20_chips = pivot_df.tail(20)
                         display_cols = [col for col in ['外資', '投信', '自營商'] if col in pivot_df.columns]
-                        chip_dates = last_20_chips.index.strftime('%m-%d')
+                        
+                        # ✨ 修正點：使用穩健的日期格式化方式，避免 strftime 報錯
+                        chip_dates_formatted = [d.strftime('%m-%d') for d in last_20_chips.index]
+                        
                         price_dict = dict(zip(x_dates, df['Close']))
-                        chip_close_prices = [price_dict.get(d, None) for d in chip_dates]
+                        # 將 chip_dates_formatted 映射回價格
+                        chip_close_prices = [price_dict.get(d, None) for d in chip_dates_formatted]
                         
                         fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
                         colors_chip = {'外資': '#8ab4f8', '投信': '#FF4B4B', '自營商': '#00FF00'}
                         for col in display_cols:
-                            fig_chip.add_trace(go.Bar(x=chip_dates, y=last_20_chips[col], name=col, marker_color=colors_chip.get(col, 'white')), secondary_y=False)
+                            fig_chip.add_trace(go.Bar(x=chip_dates_formatted, y=last_20_chips[col], name=col, marker_color=colors_chip.get(col, 'white')), secondary_y=False)
                             
-                        fig_chip.add_trace(go.Scatter(x=chip_dates, y=chip_close_prices, name='收盤價', line=dict(color='yellow', width=2), mode='lines+markers', marker=dict(size=4)), secondary_y=True)
+                        fig_chip.add_trace(go.Scatter(x=chip_dates_formatted, y=chip_close_prices, name='收盤價', line=dict(color='yellow', width=2), mode='lines+markers', marker=dict(size=4)), secondary_y=True)
                         fig_chip.update_layout(height=200, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1, font=dict(size=10)))
                         fig_chip.update_xaxes(type='category', nticks=6, showgrid=False)
                         fig_chip.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333', secondary_y=False)
