@@ -58,6 +58,11 @@ try:
 except:
     FUGLE_API_KEY = ""
 
+try:
+    FINMIND_TOKEN = st.secrets.get("FINMIND_TOKEN", "")
+except:
+    FINMIND_TOKEN = ""
+
 @st.cache_data(ttl=86400)
 def load_stock_dicts():
     try:
@@ -76,18 +81,13 @@ def color_num(val):
     elif val < 0: return f"<span class='text-green'>{val:,.0f}</span>"
     else: return "0"
 
-try:
-    FINMIND_TOKEN = st.secrets.get("FINMIND_TOKEN", "")
-except:
-    FINMIND_TOKEN = ""
-
 # ✨ 強制合併版：解決盤中看不到今天 K 棒的問題，並修復「單位陷阱」
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_tech_data_fugle(ticker):
     try:
         client = RestClient(api_key=FUGLE_API_KEY)
         
-        # 1. 抓取歷史日 K 線 (近 360 天) - 這裡的成交量 Fugle 預設單位是「股」
+        # 1. 抓取歷史日 K 線 (近 360 天)
         end_date = datetime.date.today()
         start_date = end_date - datetime.timedelta(days=360)
         
@@ -136,8 +136,7 @@ def fetch_tech_data_fugle(ticker):
             if close_p is not None:
                 today_ts = pd.Timestamp(end_date)
                 
-                # 🎯 核心修復：Fugle 盤中 API 的成交量單位是「張」，必須 *1000 轉換為「股」
-                # 以配合上方歷史資料的結構，並讓主程式統一 / 1000 轉換
+                # 核心修復：Fugle 盤中 API 的成交量單位是「張」，必須 *1000 轉換為「股」
                 vol_shares = vol_lots * 1000
                 
                 # 如果歷史資料的最後一天不是今天，就強制合併今天的即時報價
@@ -199,7 +198,7 @@ if analyze_btn or raw_input:
             df_full = fetch_tech_data_fugle(raw_ticker).copy()
             
             if len(df_full) < 20:
-                st.error(f"🚨 無法取得 [{display_title}] 的有效報價資料。")
+                st.error(f"🚨 無法取得 [{display_title}] 的有效報價資料，請確認 API Key 是否設定正確。")
                 st.stop()
                 
             df_full.index = df_full.index.tz_localize(None)
@@ -233,7 +232,7 @@ if analyze_btn or raw_input:
 
             df = df_full.tail(120).copy()
             
-            # --- ✨ 新增：指標狀態邏輯分析 (純插入，不影響原 df) ✨ ---
+            # --- ✨ 指標狀態邏輯分析 ---
             curr_k, curr_d = df['K'].iloc[-1], df['D'].iloc[-1]
             prev_k, prev_d = df['K'].iloc[-2], df['D'].iloc[-2]
             kd_status = "中性"
@@ -260,7 +259,6 @@ if analyze_btn or raw_input:
             if rsi_val > 70: rsi_status = "超買警戒"; rsi_color = "#00FF00"
             elif rsi_val < 30: rsi_status = "超跌區"; rsi_color = "#FF4B4B"
             elif rsi_val > 50: rsi_status = "強勢區"; rsi_color = "#FF4B4B"
-            # ----------------------------------------------------
             
             prev_close = df['Close'].iloc[-2]
             latest_vol = df['Volume'].iloc[-1]
@@ -282,7 +280,7 @@ if analyze_btn or raw_input:
             date_str = f"{last_date.strftime('%m/%d')}"
             x_dates = df.index.strftime('%m-%d')
 
-            # ✨✨ 智慧趨勢線演算法 (升級：投影延伸 + 排版修復) ✨✨
+            # ✨✨ 智慧趨勢線演算法 ✨✨
             order = 5 
             local_highs = []
             local_lows = []
@@ -303,7 +301,7 @@ if analyze_btn or raw_input:
                 idx2, y2 = local_highs[-1]
                 if y2 < y1: 
                     slope = (y2 - y1) / (idx2 - idx1)
-                    idx_start = max(0, idx1 - 20) # 往左投影延伸 20 天
+                    idx_start = max(0, idx1 - 20)
                     idx_end = len(df) - 1
                     y_start = y1 - slope * (idx1 - idx_start)
                     y_end = y2 + slope * (idx_end - idx2)
@@ -318,7 +316,7 @@ if analyze_btn or raw_input:
                 idx2, y2 = local_lows[-1]
                 if y2 > y1: 
                     slope = (y2 - y1) / (idx2 - idx1)
-                    idx_start = max(0, idx1 - 25) # 往左投影延伸 25 天，展現大波段氣勢
+                    idx_start = max(0, idx1 - 25)
                     idx_end = len(df) - 1
                     y_start = y1 - slope * (idx1 - idx_start)
                     y_end = y2 + slope * (idx_end - idx2)
@@ -424,10 +422,8 @@ if analyze_btn or raw_input:
                     fig.add_hrect(y0=price_strong_support, y1=price_support, line_width=0, fillcolor="green", opacity=0.15, row=1, col=1, 
                                   annotation_text=f"強勁支撐區 ({price_strong_support:.1f} - {price_support:.1f})", annotation_position="bottom right", annotation_font_color="lightgreen")
                     
-                    # ✨ 修正後的趨勢線與標註
                     if trend_x:
                         fig.add_trace(go.Scatter(x=trend_x, y=trend_y, mode='lines', line=dict(color=trend_color, width=3, dash='dashdot'), name=trendline_type), row=1, col=1)
-                        # 將文字錨點綁在起點，往右上方長，並加上背景色避免看不清楚
                         fig.add_annotation(x=trend_x[0], y=trend_y[0], text=f" {trendline_type} ", showarrow=True, arrowhead=1, ax=40, ay=-30, font=dict(color=trend_color, size=11), bgcolor="rgba(0,0,0,0.6)", bordercolor=trend_color, borderwidth=1, row=1, col=1)
 
                     colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df.iterrows()]
@@ -459,7 +455,6 @@ if analyze_btn or raw_input:
                     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333')
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # ✨ 新增：目前技術指標狀態面板 (純插入 UI) ✨
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 5px; margin-top: 5px; margin-bottom: 5px; border: 1px solid #333;">
                         <div><span style="font-size: 0.85em; color:gray;">KD:</span> <span style="font-size: 0.85em; font-weight: bold; color: {kd_color};">{kd_status} ({curr_k:.1f})</span></div>
@@ -478,11 +473,9 @@ if analyze_btn or raw_input:
                         last_20_chips = pivot_df.tail(20)
                         display_cols = [col for col in ['外資', '投信', '自營商'] if col in pivot_df.columns]
                         
-                        # ✨ 修正點：使用穩健的日期格式化方式，避免 strftime 報錯
                         chip_dates_formatted = [d.strftime('%m-%d') for d in last_20_chips.index]
                         
                         price_dict = dict(zip(x_dates, df['Close']))
-                        # 將 chip_dates_formatted 映射回價格
                         chip_close_prices = [price_dict.get(d, None) for d in chip_dates_formatted]
                         
                         fig_chip = make_subplots(specs=[[{"secondary_y": True}]])
