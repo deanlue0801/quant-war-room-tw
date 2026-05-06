@@ -543,8 +543,8 @@ if analyze_btn or raw_input:
                     st.markdown('<div class="section-title">關鍵防禦價</div>', unsafe_allow_html=True)
                     st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線支撐： <b>{price_support:.1f}</b><br>極限支撐： <b>{price_strong_support:.1f}</b></div>", unsafe_allow_html=True)
 
-            # ==========================================
-            # ✨ 新增：法人明日劇本推演模組 (動態預判) ✨
+# ==========================================
+            # ✨ 新增：法人明日劇本推演模組 (7大完全體) ✨
             # ==========================================
             script_title = "盤整觀察"
             script_color = "#FFA500"
@@ -553,42 +553,63 @@ if analyze_btn or raw_input:
             # 判斷邏輯變數設定
             is_red_candle = df['Close'].iloc[-1] > df['Open'].iloc[-1]
             is_volume_burst = latest_vol > (avg_vol_5 * 1.5)
-            # 若五日總計大於零，判斷今天買超是否佔極高比例 (隔日沖特徵)
             is_sudden_buy = today_chip['合計'] > (chip_sum_5['合計'] * 0.8) if chip_sum_5['合計'] > 0 else today_chip['合計'] > 0
             
             st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
 
-            # 劇本 1：隔日沖倒貨預警
+            # --- 劇本 1：隔日沖倒貨預警 (優先級最高：短線致命風險) ---
             if is_red_candle and is_volume_burst and is_sudden_buy and today_chip['合計'] > 0:
                 script_title = "⚠️ 隔日沖警戒 (提防開高走低)"
                 script_color = "#FFFF00"
                 script_actions.append("👉 <b>籌碼特徵</b>：今日爆量收紅，且法人買盤高度集中於單日，極高機率夾帶隔日沖分點進駐。")
                 script_actions.append("👉 <b>明日對策</b>：早盤若跳空開高切勿盲目追價，提防 9:30 前的獲利了結賣壓出籠。若早盤爆量下殺應先觀望；待 11:00 後量縮且守穩今日收盤價一半之上，再考慮切入。")
-            
-            # 劇本 2：投信連續作多波段
+
+            # --- 劇本 2：外資認錯回補 (抓強勢 V 轉底部) ---
+            elif base_percentile < 30 and chip_sum_5['外資'] < 0 and today_chip['外資'] > 0 and is_red_candle:
+                script_title = "🚀 外資認錯回補 (底部轉強)"
+                script_color = "#FF4B4B"
+                script_actions.append("👉 <b>籌碼特徵</b>：位階處於低檔且外資波段偏空，但今日外資突然回頭買超，並收出紅 K，呈現認錯回補跡象。")
+                script_actions.append("👉 <b>明日對策</b>：極佳的右側底部試單點。明日若開平或微幅開高可分批建立部位，直接將今日紅 K 最低點設為絕對停損防守線。")
+
+            # --- 劇本 3：投信高檔結帳 (抓起跌點) ---
+            elif base_percentile > 70 and chip_sum_5['投信'] > 0 and today_chip['投信'] < 0:
+                script_title = "🔪 投信高檔結帳 (獲利了結賣壓)"
+                script_color = "#00FF00"
+                script_actions.append("👉 <b>籌碼特徵</b>：股價已拉抬至高基期，原本連續買超的投信今日突然反手賣出，主力籌碼開始鬆動。")
+                script_actions.append("👉 <b>明日對策</b>：這是標準的「結帳起跌點」。明日開盤極易引發多殺多，持有多單者應跟著投信的腳步同步減碼，切勿留戀或逢低攤平。")
+
+            # --- 劇本 4：土洋對作 (內外資籌碼打架) ---
+            elif (today_chip['外資'] > 0 and today_chip['投信'] < 0) or (today_chip['外資'] < 0 and today_chip['投信'] > 0):
+                script_title = "⚔️ 土洋對作 (多空泥巴戰)"
+                script_color = "#FFA500"
+                script_actions.append("👉 <b>籌碼特徵</b>：今日外資與投信的買賣超方向完全相反，市場兩大主力對後市看法分歧。")
+                script_actions.append(f"👉 <b>明日對策</b>：盤勢進入焦灼戰。明日重點在於「誰的防線被跌破」。若股價力守月線 (<b>{price_support:.1f}</b>) 代表內資護盤成功，偏多看待；反之若跌破均線，代表外資賣壓獲勝，應暫時退場。")
+
+            # --- 劇本 5：投信波段發動 (標準多頭) ---
             elif chip_sum_5['投信'] > 0 and today_chip['投信'] > 0 and latest_close > df['MA20'].iloc[-1]:
                 script_title = "🔥 投信波段發動 (順勢偏多)"
                 script_color = "#FF4B4B"
-                script_actions.append("👉 <b>籌碼特徵</b>：投信籌碼連續進駐，且股價站穩月線之上，具備法人波段保護傘。")
-                script_actions.append(f"👉 <b>明日對策</b>：開平或開小高皆可分批建立基本部位。防守線可設於月線 (<b>{price_support:.1f}</b>) 或今日低點，未跌破前可持股續抱。若明日開盤預估量溫和放大，則攻擊勝率極高。")
+                script_actions.append("👉 <b>籌碼特徵</b>：投信籌碼連續進駐，且股價站穩月線之上，具備內資波段保護傘。")
+                script_actions.append(f"👉 <b>明日對策</b>：開平或開小高皆可分批建立基本部位。防守線可設於月線 (<b>{price_support:.1f}</b>)，未跌破前可持股續抱。若明日開盤預估量溫和放大，則攻擊勝率極高。")
 
-            # 劇本 3：法人棄守破線
+            # --- 劇本 6：法人棄守破線 (標準空頭) ---
             elif latest_close < df['MA20'].iloc[-1] and chip_sum_5['合計'] < 0:
                 script_title = "🚨 籌碼渙散 (弱勢破線)"
                 script_color = "#00FF00"
                 script_actions.append("👉 <b>籌碼特徵</b>：法人波段站在賣方，且股價已落入月線之下，上檔套牢賣壓沉重。")
-                script_actions.append("👉 <b>明日對策</b>：反彈皆是逃命波。明日若逢高觸碰月線或今日高點，應優先減碼。嚴禁在此位階摸底攤平，耐心等待站回月線或出現爆量長紅 K 止跌訊號為止。")
+                script_actions.append("👉 <b>明日對策</b>：反彈皆是逃命波。明日若逢高觸碰月線或今日高點，應優先減碼。耐心等待站回月線或出現爆量長紅 K 止跌訊號為止。")
                 
-            # 劇本 4：量縮震盪整理
+            # --- 劇本 7：量縮震盪整理 (無聊的垃圾時間) ---
             else:
                 script_title = "⚖️ 量縮震盪整理 (等待表態)"
                 script_color = "#8ab4f8"
                 script_actions.append("👉 <b>籌碼特徵</b>：目前籌碼與量價結構無極端異常，處於多空交戰或量縮洗盤階段。")
                 if latest_close > df['MA20'].iloc[-1]:
-                    script_actions.append("👉 <b>明日對策</b>：長線趨勢偏多但短線動能不足。明日開盤若無帶量（預估量不及今日），容易陷入狹幅震盪。建議採取「逢回測均線低吸」策略，切忌追高。")
+                    script_actions.append("👉 <b>明日對策</b>：長線偏多但短線動能不足。明日開盤若無帶量，容易陷入狹幅震盪。建議採取「逢回測均線低吸」策略，切忌追高。")
                 else:
-                    script_actions.append("👉 <b>明日對策</b>：短線趨勢偏弱，明日若帶量下殺將有破底風險。建議多看少做，保留現金實力。")
+                    script_actions.append("👉 <b>明日對策</b>：短線偏弱，明日若帶量下殺將有破底風險。建議多看少做，保留現金實力。")
 
+            # --- 渲染劇本結果 ---
             with st.container(border=True):
                 st.markdown(f'<div class="section-title" style="color: {script_color}; font-size: 1.15em; border-bottom: 1px solid #555; padding-bottom: 8px;">🔮 法人明日劇本推演：{script_title}</div>', unsafe_allow_html=True)
                 for act in script_actions:
