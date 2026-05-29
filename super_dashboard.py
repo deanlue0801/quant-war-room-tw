@@ -361,18 +361,28 @@ if analyze_btn or raw_input:
                     today_chip['外資'] = safe_sum(last_1, '外資'); today_chip['投信'] = safe_sum(last_1, '投信'); today_chip['自營商'] = safe_sum(last_1, '自營商')
                     today_chip['合計'] = today_chip['外資'] + today_chip['投信'] + today_chip['自營商']
 
-            # --- ✨ [融資散戶籌碼面] ✨ ---
+            # --- ✨ [融資融券散戶籌碼面] ✨ ---
             df_margin = fetch_margin_data(raw_ticker, str(start_date), str(end_date), FINMIND_TOKEN).copy()
             margin_latest_balance = 0
             margin_change = 0
+            short_latest_balance = 0
+            short_change = 0
+            
             if not df_margin.empty:
                 df_margin['date'] = pd.to_datetime(df_margin['date'])
                 df_margin = df_margin.set_index('date').sort_index()
-                # 確保欄位存在且有資料
+                
+                # 融資 (Margin Purchase) 萃取
                 if 'MarginPurchaseTodayBalance' in df_margin.columns and len(df_margin) > 0:
                     margin_latest_balance = df_margin['MarginPurchaseTodayBalance'].iloc[-1]
                     if len(df_margin) > 1:
                         margin_change = margin_latest_balance - df_margin['MarginPurchaseTodayBalance'].iloc[-2]
+                        
+                # 融券 (Short Sale) 萃取
+                if 'ShortSaleTodayBalance' in df_margin.columns and len(df_margin) > 0:
+                    short_latest_balance = df_margin['ShortSaleTodayBalance'].iloc[-1]
+                    if len(df_margin) > 1:
+                        short_change = short_latest_balance - df_margin['ShortSaleTodayBalance'].iloc[-2]
 
             # --- [黑馬潛力鑑定與勝率] ---
             black_horse_score = 0
@@ -502,7 +512,7 @@ if analyze_btn or raw_input:
                         fig_chip.update_yaxes(showgrid=False, secondary_y=True)
                         st.plotly_chart(fig_chip, use_container_width=True)
                         
-                        # ✨ 修改 HTML 表格加入融資數據
+            # ✨ 修改 HTML 表格加入融資與融券數據
                         html_table = f"""
                         <table class="chip-table">
                             <tr><th></th><th>外資</th><th>投信</th><th>自營商</th><th>合計</th></tr>
@@ -510,6 +520,7 @@ if analyze_btn or raw_input:
                             <tr><td class="row-title">近5日</td><td>{color_num(chip_sum_5['外資'])}</td><td>{color_num(chip_sum_5['投信'])}</td><td>{color_num(chip_sum_5['自營商'])}</td><td>{color_num(chip_sum_5['合計'])}</td></tr>
                             <tr><td class="row-title">近10日</td><td>{color_num(chip_sum_10['外資'])}</td><td>{color_num(chip_sum_10['投信'])}</td><td>{color_num(chip_sum_10['自營商'])}</td><td>{color_num(chip_sum_10['合計'])}</td></tr>
                             <tr><td class="row-title" style="border-top: 1px solid #555; color:#FFA500;">📌 散戶融資</td><td colspan="2" style="border-top: 1px solid #555; text-align:center;">目前餘額: <b>{margin_latest_balance:,.0f}</b> 張</td><td colspan="2" style="border-top: 1px solid #555; text-align:center;">今日增減: {color_num(margin_change)}</td></tr>
+                            <tr><td class="row-title" style="color:#00FF00;">📌 散戶融券</td><td colspan="2" style="text-align:center;">目前餘額: <b>{short_latest_balance:,.0f}</b> 張</td><td colspan="2" style="text-align:center;">今日增減: {color_num(short_change)}</td></tr>
                         </table>
                         """
                         st.markdown(html_table, unsafe_allow_html=True)
