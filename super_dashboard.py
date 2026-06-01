@@ -154,7 +154,7 @@ def color_num(val):
     else: return "0"
 
 # ==========================================
-# 🌟 全市場掃描核心邏輯 (加入 1 小時快取鎖定)
+# 🌟 全市場掃描核心邏輯 (加入 4,3,2 評分機制)
 # ==========================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def run_market_screener():
@@ -166,9 +166,9 @@ def run_market_screener():
         client = RestClient(api_key=FUGLE_API_KEY)
         
         end_date = datetime.date.today()
-        start_date = end_date - datetime.timedelta(days=10) # 為了抓到近 5 日有效交易日
+        start_date = end_date - datetime.timedelta(days=10)
         
-        # 1. 籌碼初篩
+        # 1. 籌碼初篩：放寬標準，只要近5日合計買超 > 0 就納入計算，交給後續評分
         all_chip = dl.taiwan_stock_institutional_investors(stock_id="", start_date=str(start_date), end_date=str(end_date))
         if all_chip.empty: return pd.DataFrame()
             
@@ -179,11 +179,13 @@ def run_market_screener():
         latest_dates = sorted(all_chip['date'].unique())[-5:]
         chip_5d = all_chip[all_chip['date'].isin(latest_dates)]
         chip_summary = chip_5d.groupby('stock_id')['net_shares'].sum().reset_index()
-        legal_targets = chip_summary[chip_summary['net_shares'] > 300]['stock_id'].tolist()
+        
+        # 只要法人不是整體在倒貨，就抓進來評分
+        legal_targets = chip_summary[chip_summary['net_shares'] > 0]['stock_id'].tolist()
         
         strong_buy_list = []
         
-        # 2. 技術面精篩
+        # 2. 技術面精篩與計分
         for ticker in legal_targets:
             try:
                 tech_start = (end_date - datetime.timedelta(days=360)).strftime('%Y-%m-%d')
@@ -203,21 +205,46 @@ def run_market_screener():
                 low_52w = df_tech['low'].min()
                 base_pct = ((latest_close - low_52w) / (high_52w - low_52w)) * 100 if high_52w != low_52w else 50
                 
+                chip_val = chip_summary[chip_summary['stock_id'] == ticker]['net_shares'].values[0]
+                
+                # 四大條件判斷
                 cond_base = base_pct < 60
                 cond_trend = (latest_close > ma20) and (latest_close > ma60)
                 cond_vol = latest_vol > (avg_vol_5 * 1.5)
+                cond_chip = chip_val > 300
                 
-                if cond_base and cond_trend and cond_vol and latest_vol > 1000:
+                # 綜合計分
+                score = sum([cond_base, cond_trend, cond_vol, cond_chip])
+                
+                # 排除完全沒有流動性的股票
+                if score >= 2 and latest_vol > 500:
                     name = stock_dict.get(ticker, ticker)
+                    
+                    if score == 4: grade = "🔥 S級 (滿分)"
+                    elif score == 3: grade = "🚀 A級 (強勢)"
+                    else: grade = "🟢 B級 (試單)"
+                    
+                    matched = []
+                    if cond_base: matched.append("低基期")
+                    if cond_trend: matched.append("站上均線")
+                    if cond_vol: matched.append("量能點火")
+                    if cond_chip: matched.append("法人大買")
+                    
                     strong_buy_list.append({
-                        "代號": ticker, "名稱": name, "收盤價": latest_close,
-                        "位階": f"{base_pct:.1f}%", "成交量(張)": int(latest_vol), 
-                        "5日法人買超(張)": int(chip_summary[chip_summary['stock_id'] == ticker]['net_shares'].values[0])
+                        "代號": ticker, "名稱": name, "等級": grade, "分數": score, 
+                        "收盤價": latest_close, "位階": f"{base_pct:.1f}%", 
+                        "成交量(張)": int(latest_vol), 
+                        "5日法人買超": int(chip_val),
+                        "符合條件": ", ".join(matched)
                     })
             except:
                 continue
                 
-        return pd.DataFrame(strong_buy_list)
+        df_result = pd.DataFrame(strong_buy_list)
+        # 依分數與法人買超張數排序
+        if not df_result.empty:
+            df_result = df_result.sort_values(by=["分數", "5日法人買超"], ascending=[False, False])
+        return df_result
     except Exception as e:
         return pd.DataFrame()
 
@@ -225,10 +252,10 @@ def run_market_screener():
 # ==========================================
 # 2. 雙分頁架構建立
 # ==========================================
-tab_monitor, tab_screener = st.tabs(["📊 單檔戰情解析 (含紀律訊號)", "🏆 全市場S級黑馬掃描"])
+tab_monitor, tab_screener = st.tabs(["📊 單檔戰情解析 (含紀律訊號)", "🏆 全市場黑馬分級掃描"])
 
 # ==========================================
-# TAB 1: 單檔戰情解析 (原功能與搜尋歷史)
+# TAB 1: 單檔戰情解析 (原功能與跨分頁點擊)
 # ==========================================
 with tab_monitor:
     # --- 搜尋歷史暫存機制 ---
@@ -255,7 +282,6 @@ with tab_monitor:
         st.markdown("<div style='font-size: 0.8em; color: gray; margin-bottom: 5px;'>🕒 最近搜尋紀錄 (點擊直接分析)：</div>", unsafe_allow_html=True)
         hist_cols = st.columns(len(st.session_state['search_history']) + 1)
         
-        # 建立變數接收被點擊的歷史按鈕
         clicked_hist = None
         for i, hist_ticker in enumerate(st.session_state['search_history']):
             hist_name = stock_dict.get(hist_ticker, "")
@@ -265,9 +291,14 @@ with tab_monitor:
     else:
         clicked_hist = None
 
-    # --- 判斷啟動訊號 ---
+    # --- 判斷啟動訊號 (含跨分頁傳送邏輯) ---
     search_term = ""
-    if clicked_hist:
+    # 優先處理從 Tab 2 點選傳送過來的股票
+    if st.session_state.get('run_cross_tab_analysis') and st.session_state.get('target_ticker'):
+        search_term = st.session_state['target_ticker']
+        # 執行一次後就重置狀態，避免無限循環
+        st.session_state['run_cross_tab_analysis'] = False 
+    elif clicked_hist:
         search_term = clicked_hist
     elif analyze_btn and raw_input:
         search_term = raw_input.strip()
@@ -278,7 +309,6 @@ with tab_monitor:
         stock_name = stock_dict.get(raw_ticker, "")
         display_title = f"{raw_ticker} {stock_name}" if stock_name else raw_ticker
         
-        # 寫入歷史紀錄
         add_to_history(raw_ticker)
         
         with st.spinner(f'鎖定目標 [{display_title}] ... 啟動戰情解析中...'):
@@ -681,26 +711,43 @@ with tab_monitor:
                 st.error(f"資料處理發生錯誤：{e}")
 
 # ==========================================
-# TAB 2: 全市場黑馬掃描器
+# TAB 2: 全市場黑馬分級掃描器
 # ==========================================
 with tab_screener:
-    st.markdown("### 🏆 每日台股 S級黑馬全市場掃描")
-    st.markdown("這項工具將利用量化濾網，自動掃描全台股近2000檔標的，找出同時滿足**「低基期、站上均線、量能點火、法人進駐」**四大條件的強勢股票。")
+    st.markdown("### 🏆 每日台股 S/A/B 級潛力股分級掃描")
+    st.markdown("這項工具將放寬初篩標準，找出具備**「法人買超」**基礎的股票，並根據「低基期、站上均線、量能點火、買超>300張」計算分數 (2~4分)。")
     
     col_scan1, col_scan2 = st.columns([1, 4])
     with col_scan1:
-        if st.button("🚀 執行/獲取最新掃描", use_container_width=True, type="primary"):
+        if st.button("🚀 執行/獲取最新分級掃描", use_container_width=True, type="primary"):
             st.session_state['run_scan'] = True
             
     with col_scan2:
-        st.markdown("<div style='margin-top: 10px; font-size: 0.9em; color: gray;'>※ 執行結果將自動鎖定快取 1 小時，切換分頁不會導致資料遺失。</div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top: 10px; font-size: 0.9em; color: gray;'>※ 執行結果自動鎖定快取 1 小時。</div>", unsafe_allow_html=True)
         
     if st.session_state.get('run_scan', False):
-        with st.spinner("網羅全市場資料中，約需 1~2 分鐘，請稍候..."):
+        with st.spinner("網羅全市場資料並計算得分中，約需 1~2 分鐘，請稍候..."):
             result_df = run_market_screener()
             
             if not result_df.empty:
-                st.success(f"掃描完成！今日共發現 {len(result_df)} 檔潛力黑馬。")
+                st.success(f"掃描完成！今日共發現 {len(result_df)} 檔具備攻擊潛力的標的。")
+                
+                # --- 一鍵帶入戰情室的快速啟動器 ---
+                st.markdown("<div style='background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid #555; margin-bottom: 20px;'>", unsafe_allow_html=True)
+                st.markdown("#### ⚡ 快速帶入戰情室解析")
+                col_launch1, col_launch2 = st.columns([3, 1])
+                
+                # 建立下拉選單讓使用者選取想解析的股票
+                options = result_df['代號'].tolist()
+                selected_ticker = col_launch1.selectbox("請選擇您有興趣的掃描結果：", options, format_func=lambda x: f"{x} {stock_dict.get(x, '')}")
+                
+                if col_launch2.button("傳送並解析 🎯", use_container_width=True):
+                    st.session_state['target_ticker'] = selected_ticker
+                    st.session_state['run_cross_tab_analysis'] = True
+                    st.success(f"✅ **目標 {selected_ticker} 已鎖定！** 請點擊上方【📊 單檔戰情解析】分頁，系統已為您備妥戰情報告。")
+                st.markdown("</div>", unsafe_allow_html=True)
+
+                # 顯示表格
                 st.dataframe(result_df, use_container_width=True, hide_index=True)
             else:
-                st.warning("⏳ 掃描完成。今日台股市場中，尚無標的同時完美符合四項強勢進場指標。建議保持觀望。")
+                st.warning("⏳ 掃描完成。今日台股市場中，無任何標的符合最低試單標準。建議保留現金實力。")
