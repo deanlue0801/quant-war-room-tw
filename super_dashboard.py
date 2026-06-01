@@ -332,6 +332,9 @@ if analyze_btn or raw_input:
             chip_sum_5 = {"合計": 0, "外資": 0, "投信": 0, "自營商": 0}
             today_chip = {"外資": 0, "投信": 0, "自營商": 0, "合計": 0}
             
+            # ✨ 動態提取法人資料最後日期
+            chip_latest_date_str = "N/A"
+            
             if not df_chip.empty:
                 df_chip['買賣超(張)'] = (df_chip['buy'] - df_chip['sell']) / 1000
                 def simplify_name(name):
@@ -347,6 +350,8 @@ if analyze_btn or raw_input:
                 pivot_df.index = pd.to_datetime(pivot_df.index)
                 
                 if len(pivot_df) > 0:
+                    chip_latest_date_str = pivot_df.index[-1].strftime('%m/%d')  # 取得實際最新日期
+                    
                     last_10 = pivot_df.tail(10)
                     last_5 = pivot_df.tail(5)
                     last_1 = pivot_df.tail(1)
@@ -366,9 +371,15 @@ if analyze_btn or raw_input:
             short_latest_balance = 0
             short_change = 0
             
+            # ✨ 動態提取融資券資料最後日期
+            margin_latest_date_str = "N/A"
+            
             if not df_margin.empty:
                 df_margin['date'] = pd.to_datetime(df_margin['date'])
                 df_margin = df_margin.set_index('date').sort_index()
+                
+                if len(df_margin) > 0:
+                    margin_latest_date_str = df_margin.index[-1].strftime('%m/%d')  # 取得實際最新日期
                 
                 if 'MarginPurchaseTodayBalance' in df_margin.columns and len(df_margin) > 0:
                     margin_latest_balance = df_margin['MarginPurchaseTodayBalance'].iloc[-1]
@@ -533,14 +544,14 @@ if analyze_btn or raw_input:
                         fig_chip.update_yaxes(showgrid=False, secondary_y=True)
                         st.plotly_chart(fig_chip, use_container_width=True)
                         
-                        # ✨ 修改 HTML 表格加入融資與融券數據，並直接顯示判讀結果
+                        # ✨ 修改 HTML 表格加入動態日期
                         html_table = f"""
                         <table class="chip-table">
                             <tr><th></th><th>外資</th><th>投信</th><th>自營商</th><th>合計</th></tr>
-                            <tr><td class="row-title">今日</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['自營商'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
+                            <tr><td class="row-title">最新 ({chip_latest_date_str})</td><td>{color_num(today_chip['外資'])}</td><td>{color_num(today_chip['投信'])}</td><td>{color_num(today_chip['自營商'])}</td><td>{color_num(today_chip['合計'])}</td></tr>
                             <tr><td class="row-title">近5日</td><td>{color_num(chip_sum_5['外資'])}</td><td>{color_num(chip_sum_5['投信'])}</td><td>{color_num(chip_sum_5['自營商'])}</td><td>{color_num(chip_sum_5['合計'])}</td></tr>
-                            <tr><td class="row-title" style="border-top: 1px solid #555; color:#FFA500;">📌 散戶融資</td><td colspan="2" style="border-top: 1px solid #555; text-align:center;">目前餘額: <b>{margin_latest_balance:,.0f}</b> 張</td><td colspan="2" style="border-top: 1px solid #555; text-align:center;">今日增減: {color_num(margin_change)}</td></tr>
-                            <tr><td class="row-title" style="color:#00FF00;">📌 散戶融券</td><td colspan="2" style="text-align:center;">目前餘額: <b>{short_latest_balance:,.0f}</b> 張</td><td colspan="2" style="text-align:center;">今日增減: {color_num(short_change)}</td></tr>
+                            <tr><td class="row-title" style="border-top: 1px solid #555; color:#FFA500;">📌 散戶融資</td><td colspan="2" style="border-top: 1px solid #555; text-align:center;">目前餘額: <b>{margin_latest_balance:,.0f}</b> 張</td><td colspan="2" style="border-top: 1px solid #555; text-align:center;">增減 ({margin_latest_date_str}): {color_num(margin_change)}</td></tr>
+                            <tr><td class="row-title" style="color:#00FF00;">📌 散戶融券</td><td colspan="2" style="text-align:center;">目前餘額: <b>{short_latest_balance:,.0f}</b> 張</td><td colspan="2" style="text-align:center;">增減 ({margin_latest_date_str}): {color_num(short_change)}</td></tr>
                             <tr><td class="row-title" style="border-top: 1px dotted #555; color:#fff;">🎯 散戶狀態</td><td colspan="4" style="border-top: 1px dotted #555; text-align:center; font-weight:bold; color:{margin_status_color};">{margin_status_text}</td></tr>
                         </table>
                         """
@@ -548,7 +559,7 @@ if analyze_btn or raw_input:
                         st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
                         st.markdown('<div class="section-title" style="font-size:0.9em; border:none; margin-bottom:0;">主力進出分析 (近10日多空)</div>', unsafe_allow_html=True)
                         col_c1, col_c2 = st.columns(2)
-                        col_c1.markdown(f"<div class='text-sm'>今日主力動向</div><div class='metric-value'>{color_num(today_chip['合計'])}</div>", unsafe_allow_html=True)
+                        col_c1.markdown(f"<div class='text-sm'>最新主力動向 ({chip_latest_date_str})</div><div class='metric-value'>{color_num(today_chip['合計'])}</div>", unsafe_allow_html=True)
                         col_c2.markdown(f"<div class='text-sm'>10日波段籌碼</div><div class='metric-value'>{color_num(chip_sum_10['合計'])}</div>", unsafe_allow_html=True)
                     else:
                         st.warning("查無籌碼資料")
@@ -590,7 +601,6 @@ if analyze_btn or raw_input:
 
                 with st.container(border=True):
                     st.markdown('<div class="section-title title-red">🚨 警示雷達</div>', unsafe_allow_html=True)
-                    # ✨ 這裡加入完整的資券判定雷達
                     if base_percentile > 80 and chip_sum_10['合計'] < 0: 
                         st.markdown("<span class='text-sm'>高檔基期+法人倒貨，慎防崩跌。</span>", unsafe_allow_html=True)
                     elif margin_change > 0 and latest_close < df['MA20'].iloc[-1] and price_change < 0: 
@@ -609,76 +619,58 @@ if analyze_btn or raw_input:
                     st.markdown(f"<div class='text-sm'>壓力區： <b>{price_pressure:.1f}</b><br>月線支撐： <b>{price_support:.1f}</b><br>極限支撐： <b>{price_strong_support:.1f}</b></div>", unsafe_allow_html=True)
 
             # ==========================================
-            # ✨ 新增：法人明日劇本推演模組 (含融資融券判定) ✨
+            # 法人明日劇本推演模組 (含融資融券判定)
             # ==========================================
             script_title = "盤整觀察"
             script_color = "#FFA500"
             script_actions = []
 
-            # 判斷邏輯變數設定
             is_red_candle = df['Close'].iloc[-1] > df['Open'].iloc[-1]
             is_volume_burst = latest_vol > (avg_vol_5 * 1.5)
             is_sudden_buy = today_chip['合計'] > (chip_sum_5['合計'] * 0.8) if chip_sum_5['合計'] > 0 else today_chip['合計'] > 0
             
             st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
 
-            # --- ✨ 劇本 0：散戶接刀破底 (最高危險) ---
             if latest_close < df['MA20'].iloc[-1] and margin_change > 0 and chip_sum_5['合計'] < 0:
                 script_title = "🚨 散戶接刀破底 (高風險籌碼凌亂)"
                 script_color = "#FF0000"
                 script_actions.append("👉 <b>籌碼特徵</b>：股價跌破月線，法人波段倒貨，但今日【融資餘額不減反增】，這是標準的散戶聽消息進場接刀攤平。")
                 script_actions.append("👉 <b>明日對策</b>：極度危險的籌碼結構！明日若有反彈絕對是逃命波，切勿在跌勢中跟著融資攤平。請嚴格執行停損，等待融資出現連續大減（斷頭或停損）才具備止跌條件。")
-
-            # --- ✨ 劇本 1：軋空噴出 (最強多頭) ---
             elif price_change > 0 and margin_change < 0 and short_change > 0 and chip_sum_5['合計'] > 0:
                 script_title = "🔥 主力軋空噴出 (散戶認輸前不會停)"
                 script_color = "#FF4B4B"
                 script_actions.append("👉 <b>籌碼特徵</b>：法人買超推升股價，但【融資退場、融券大增】，散戶一路放空一路被嘎。")
                 script_actions.append("👉 <b>明日對策</b>：這是最強勢的多頭格局！空軍被迫回補的買盤將成為推升股價的最佳燃料。建議沿著 5 日線偏多操作，直到融券出現大量回補為止。切忌在此時去猜高點放空。")
-
-            # --- 劇本 2：隔日沖倒貨預警 ---
             elif is_red_candle and is_volume_burst and is_sudden_buy and today_chip['合計'] > 0:
                 script_title = "⚠️ 隔日沖警戒 (提防開高走低)"
                 script_color = "#FFFF00"
                 script_actions.append("👉 <b>籌碼特徵</b>：今日爆量收紅，且法人買盤高度集中於單日，極高機率夾帶隔日沖分點進駐。")
                 script_actions.append("👉 <b>明日對策</b>：早盤若跳空開高切勿盲目追價，提防 9:30 前的獲利了結賣壓出籠。若早盤爆量下殺應先觀望；待 11:00 後量縮且守穩今日收盤價一半之上，再考慮切入。")
-
-            # --- 劇本 3：外資認錯回補 ---
             elif base_percentile < 30 and chip_sum_5['外資'] < 0 and today_chip['外資'] > 0 and is_red_candle:
                 script_title = "🚀 外資認錯回補 (底部轉強)"
                 script_color = "#FF4B4B"
                 script_actions.append("👉 <b>籌碼特徵</b>：位階處於低檔且外資波段偏空，但今日外資突然回頭買超，並收出紅 K，呈現認錯回補跡象。")
                 script_actions.append("👉 <b>明日對策</b>：極佳的右側底部試單點。明日若開平或微幅開高可分批建立部位，直接將今日紅 K 最低點設為絕對停損防守線。")
-
-            # --- 劇本 4：投信高檔結帳 ---
             elif base_percentile > 70 and chip_sum_5['投信'] > 0 and today_chip['投信'] < 0:
                 script_title = "🔪 投信高檔結帳 (獲利了結賣壓)"
                 script_color = "#00FF00"
                 script_actions.append("👉 <b>籌碼特徵</b>：股價已拉抬至高基期，原本連續買超的投信今日突然反手賣出，主力籌碼開始鬆動。")
                 script_actions.append("👉 <b>明日對策</b>：這是標準的「結帳起跌點」。明日開盤極易引發多殺多，持有多單者應跟著投信的腳步同步減碼，切勿留戀或逢低攤平。")
-
-            # --- 劇本 5：土洋對作 ---
             elif (today_chip['外資'] > 0 and today_chip['投信'] < 0) or (today_chip['外資'] < 0 and today_chip['投信'] > 0):
                 script_title = "⚔️ 土洋對作 (多空泥巴戰)"
                 script_color = "#FFA500"
                 script_actions.append("👉 <b>籌碼特徵</b>：今日外資與投信的買賣超方向完全相反，市場兩大主力對後市看法分歧。")
                 script_actions.append(f"👉 <b>明日對策</b>：盤勢進入焦灼戰。明日重點在於「誰的防線被跌破」。若股價力守月線 (<b>{price_support:.1f}</b>) 代表內資護盤成功，偏多看待；反之若跌破均線，代表外資賣壓獲勝，應暫時退場。")
-
-            # --- 劇本 6：投信波段發動 ---
             elif chip_sum_5['投信'] > 0 and today_chip['投信'] > 0 and latest_close > df['MA20'].iloc[-1]:
                 script_title = "🔥 投信波段發動 (順勢偏多)"
                 script_color = "#FF4B4B"
                 script_actions.append("👉 <b>籌碼特徵</b>：投信籌碼連續進駐，且股價站穩月線之上，具備內資波段保護傘。")
-                script_actions.append(f"👉 <b>明日對策</b>：開平或開小高皆可分批建立基本部位。防守線可設於月線 (<b>{price_support:.1f}</b>)，未跌破前可持股續抱。若明日開盤預估量溫StackTrace和放大，則攻擊勝率極高。")
-
-            # --- 劇本 7：法人棄守破線 ---
+                script_actions.append(f"👉 <b>明日對策</b>：開平或開小高皆可分批建立基本部位。防守線可設於月線 (<b>{price_support:.1f}</b>)，未跌破前可持股續抱。若明日開盤預估量能溫和放大，則攻擊勝率極高。")
             elif latest_close < df['MA20'].iloc[-1] and chip_sum_5['合計'] < 0:
                 script_title = "🚨 籌碼渙散 (弱勢破線)"
                 script_color = "#00FF00"
                 script_actions.append("👉 <b>籌碼特徵</b>：法人波段站在賣方，且股價已落入月線之下，上檔套牢賣壓沉重。")
                 script_actions.append("👉 <b>明日對策</b>：反彈皆是逃命波。明日若逢高觸碰月線或今日高點，應優先減碼。耐心等待站回月線或出現爆量長紅 K 止跌訊號為止。")
-                
-            # --- 劇本 8：量縮震盪整理 ---
             else:
                 script_title = "⚖️ 量縮震盪整理 (等待表態)"
                 script_color = "#8ab4f8"
@@ -688,11 +680,58 @@ if analyze_btn or raw_input:
                 else:
                     script_actions.append("👉 <b>明日對策</b>：短線偏弱，明日若帶量下殺將有破底風險。建議多看少做，保留現金實力。")
 
-            # --- 渲染劇本結果 ---
             with st.container(border=True):
                 st.markdown(f'<div class="section-title" style="color: {script_color}; font-size: 1.15em; border-bottom: 1px solid #555; padding-bottom: 8px;">🔮 法人明日劇本推演：{script_title}</div>', unsafe_allow_html=True)
                 for act in script_actions:
                     st.markdown(f"<div style='font-size: 0.95em; margin-top: 8px; line-height: 1.5;'>{act}</div>", unsafe_allow_html=True)
+
+            # ==========================================
+            # ✨ 新增：實戰紀律執行訊號 ✨
+            # ==========================================
+            st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown('<div class="section-title" style="font-size: 1.2em;">🎯 實戰紀律執行訊號</div>', unsafe_allow_html=True)
+                
+                signal_cols = st.columns(2)
+                
+                # --- 進場訊號邏輯 ---
+                buy_signal_text = "⏳ 觀望：未達量化進場標準"
+                buy_signal_color = "gray"
+                
+                if black_horse_score == 4:
+                    buy_signal_text = "✅ 強勢進場：滿足 S 級黑馬四大條件"
+                    buy_signal_color = "#00FF00"
+                elif black_horse_score >= 3 and latest_close > df['MA20'].iloc[-1]:
+                    buy_signal_text = "🟢 試單進場：趨勢偏多，可建立基本部位"
+                    buy_signal_color = "#00FF00"
+                
+                # --- 出場與停損邏輯 ---
+                sell_signal_text = "🛡️ 續抱：目前無明顯破線危機"
+                sell_signal_color = "gray"
+                
+                if latest_close < price_strong_support:
+                    sell_signal_text = "🚨 絕對停損：跌破極限支撐，無條件出場！"
+                    sell_signal_color = "#FF0000"
+                elif latest_close < price_support:
+                    sell_signal_text = "⚠️ 破線警示：跌破月線，建議減碼或停損"
+                    sell_signal_color = "#FFA500"
+                elif kd_status == "死亡交叉" or rsi_status == "超買警戒":
+                    sell_signal_text = "🟡 停利準備：高檔動能轉弱，執行移動停利"
+                    sell_signal_color = "#FFA500"
+                    
+                signal_cols[0].markdown(f"""
+                    <div style='border: 2px solid {buy_signal_color}; border-radius: 8px; padding: 15px; text-align: center; height: 100%;'>
+                        <div style='font-size: 1em; color: gray; margin-bottom: 5px;'>買進訊號 (Buy)</div>
+                        <div style='font-size: 1.2em; font-weight: bold; color: {buy_signal_color};'>{buy_signal_text}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                signal_cols[1].markdown(f"""
+                    <div style='border: 2px solid {sell_signal_color}; border-radius: 8px; padding: 15px; text-align: center; height: 100%;'>
+                        <div style='font-size: 1em; color: gray; margin-bottom: 5px;'>賣出 / 防守訊號 (Sell / Stop Loss)</div>
+                        <div style='font-size: 1.2em; font-weight: bold; color: {sell_signal_color};'>{sell_signal_text}</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"資料處理發生錯誤：{e}")
