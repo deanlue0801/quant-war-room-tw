@@ -50,6 +50,9 @@ st.markdown("""
     .zone-indicator { padding: 5px 10px; border-radius: 5px; font-weight: bold; text-align: center; margin-top: 5px; border: 1px solid #555;}
     .stTabs [data-baseweb="tab-list"] { gap: 24px; }
     .stTabs [data-baseweb="tab"] { height: 50px; font-size: 1.2rem; }
+    
+    /* 666戰法專屬樣式 */
+    .strategy-666-box { background: rgba(138, 180, 248, 0.05); border-left: 4px solid #8ab4f8; padding: 10px 15px; border-radius: 4px; margin-top: 10px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -155,7 +158,7 @@ def color_num(val):
     else: return "0"
 
 # ==========================================
-# 🌟 全市場掃描核心邏輯 (移除快取，加入降速與進度條)
+# 🌟 全市場掃描核心邏輯
 # ==========================================
 def run_market_screener(progress_bar, status_text):
     try:
@@ -170,7 +173,6 @@ def run_market_screener(progress_bar, status_text):
         
         status_text.write("⏳ 階段 1/2：從 FinMind 獲取全市場最新籌碼動向...")
         
-        # 1. 籌碼初篩：抓取全市場近5日資料
         all_chip = dl.taiwan_stock_institutional_investors(stock_id="", start_date=str(start_date), end_date=str(end_date))
         if all_chip.empty: 
             status_text.write("🚨 獲取籌碼資料失敗。")
@@ -184,7 +186,6 @@ def run_market_screener(progress_bar, status_text):
         chip_5d = all_chip[all_chip['date'].isin(latest_dates)]
         chip_summary = chip_5d.groupby('stock_id')['net_shares'].sum().reset_index()
         
-        # 先抓出有「實質買超」的前 60 名，大幅減少對 Fugle 請求次數以避開限速
         chip_summary = chip_summary.sort_values(by='net_shares', ascending=False)
         legal_targets = chip_summary[chip_summary['net_shares'] > 100].head(60)['stock_id'].tolist()
         
@@ -195,9 +196,7 @@ def run_market_screener(progress_bar, status_text):
         strong_buy_list = []
         total_targets = len(legal_targets)
         
-        # 2. 技術面精篩與計分 (加入降速)
         for i, ticker in enumerate(legal_targets):
-            # 更新進度條與狀態
             progress = int((i + 1) / total_targets * 100)
             progress_bar.progress(progress)
             status_text.write(f"⏳ 階段 2/2：精密分析技術面... 掃描進度 {i+1}/{total_targets} ({stock_dict.get(ticker, ticker)})")
@@ -207,7 +206,6 @@ def run_market_screener(progress_bar, status_text):
                 candles = client.stock.historical.candles(symbol=ticker, timeframe="D", from_=tech_start, to=end_date.strftime('%Y-%m-%d'))
                 df_tech = pd.DataFrame(candles['data'])
                 
-                # 降速保護，避免踩到每分鐘 60 次限制
                 time.sleep(0.8)
                 
                 if df_tech.empty or len(df_tech) < 60: continue
@@ -259,7 +257,7 @@ def run_market_screener(progress_bar, status_text):
             df_result = df_result.sort_values(by=["分數", "5日法人買超"], ascending=[False, False])
             
         status_text.write("✅ 掃描完成！")
-        progress_bar.empty() # 隱藏進度條
+        progress_bar.empty() 
         return df_result
     except Exception as e:
         status_text.write(f"🚨 掃描過程發生錯誤: {e}")
@@ -284,13 +282,16 @@ with tab_monitor:
             if len(st.session_state['search_history']) > 8:
                 st.session_state['search_history'].pop()
 
-    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1.5, 1.5, 6])
-    with col_ctrl1:
-        raw_input = st.text_input("搜尋", "", label_visibility="collapsed", placeholder="輸入代號或名稱，例如: 6269")
-    with col_ctrl2:
-        analyze_btn = st.button("🔥 啟動全板面解析", use_container_width=True)
-    with col_ctrl3:
-        st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 Fugle (盤中即時) + FinMind 雙引擎 + 智能畫線視覺模組</div>", unsafe_allow_html=True)
+    # --- 修改點 1：使用 st.form 包覆輸入區塊，讓按 Enter 就能送出 ---
+    with st.form(key='search_form', clear_on_submit=False):
+        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1.5, 1.5, 6])
+        with col_ctrl1:
+            raw_input = st.text_input("搜尋", "", label_visibility="collapsed", placeholder="輸入代號或名稱並按 Enter")
+        with col_ctrl2:
+            # 將原本的 button 改為 form_submit_button
+            analyze_btn = st.form_submit_button("🔥 啟動全板面解析", use_container_width=True)
+        with col_ctrl3:
+            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 搭載 Fugle (盤中即時) + FinMind 雙引擎 + 智能畫線視覺模組</div>", unsafe_allow_html=True)
 
     if st.session_state['search_history']:
         st.markdown("<div style='font-size: 0.8em; color: gray; margin-bottom: 5px;'>🕒 最近搜尋紀錄 (點擊直接分析)：</div>", unsafe_allow_html=True)
@@ -326,8 +327,8 @@ with tab_monitor:
                 # --- [技術面] ---
                 df_full = fetch_tech_data_fugle(raw_ticker).copy()
                 
-                if len(df_full) < 20:
-                    st.error(f"🚨 無法取得 [{display_title}] 的有效報價資料，請確認 API Key 是否設定正確。")
+                if len(df_full) < 60: # 修改：為了計算60MA與KD60，確保資料量足夠
+                    st.error(f"🚨 無法取得 [{display_title}] 足夠的報價資料 (小於60天)，請確認 API 或標的狀態。")
                     st.stop()
                     
                 df_full.index = df_full.index.tz_localize(None)
@@ -353,11 +354,20 @@ with tab_monitor:
                 df_full['Signal'] = df_full['MACD'].ewm(span=9, adjust=False).mean()
                 df_full['OSC'] = df_full['MACD'] - df_full['Signal']
 
+                # 一般 KD(9,3,3)
                 low_min = df_full['Low'].rolling(window=9).min()
                 high_max = df_full['High'].rolling(window=9).max()
                 df_full['RSV'] = 100 * ((df_full['Close'] - low_min) / (high_max - low_min))
                 df_full['K'] = df_full['RSV'].ewm(com=2, adjust=False).mean()
                 df_full['D'] = df_full['K'].ewm(com=2, adjust=False).mean()
+
+                # --- 修改點 2：加入 666戰法專用 KD(60,3,3) 計算 ---
+                low_min_60 = df_full['Low'].rolling(window=60).min()
+                high_max_60 = df_full['High'].rolling(window=60).max()
+                df_full['RSV_60'] = 100 * ((df_full['Close'] - low_min_60) / (high_max_60 - low_min_60))
+                # com=2 相當於 span=5, 在 ewm 的平滑上近似於傳統的 3 天平均
+                df_full['K_60'] = df_full['RSV_60'].ewm(com=2, adjust=False).mean()
+                df_full['D_60'] = df_full['K_60'].ewm(com=2, adjust=False).mean()
 
                 df = df_full.tail(120).copy()
                 
@@ -561,7 +571,7 @@ with tab_monitor:
                         
                         st.markdown(f"""
                         <div style="display: flex; justify-content: space-between; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 5px; margin-top: 5px; margin-bottom: 5px; border: 1px solid #333;">
-                            <div><span style="font-size: 0.85em; color:gray;">KD:</span> <span style="font-size: 0.85em; font-weight: bold; color: {kd_color};">{kd_status} ({curr_k:.1f})</span></div>
+                            <div><span style="font-size: 0.85em; color:gray;">KD(9):</span> <span style="font-size: 0.85em; font-weight: bold; color: {kd_color};">{kd_status} ({curr_k:.1f})</span></div>
                             <div><span style="font-size: 0.85em; color:gray;">MACD:</span> <span style="font-size: 0.85em; font-weight: bold; color: {macd_color};">{macd_status}</span></div>
                             <div><span style="font-size: 0.85em; color:gray;">RSI:</span> <span style="font-size: 0.85em; font-weight: bold; color: {rsi_color};">{rsi_status} ({rsi_val:.1f})</span></div>
                         </div>
@@ -717,6 +727,47 @@ with tab_monitor:
                     signal_cols[0].markdown(f"<div style='border: 2px solid {buy_signal_color}; border-radius: 8px; padding: 15px; text-align: center; height: 100%;'><div style='font-size: 1em; color: gray; margin-bottom: 5px;'>買進訊號 (Buy)</div><div style='font-size: 1.2em; font-weight: bold; color: {buy_signal_color};'>{buy_signal_text}</div></div>", unsafe_allow_html=True)
                     signal_cols[1].markdown(f"<div style='border: 2px solid {sell_signal_color}; border-radius: 8px; padding: 15px; text-align: center; height: 100%;'><div style='font-size: 1em; color: gray; margin-bottom: 5px;'>賣出 / 防守訊號 (Sell / Stop Loss)</div><div style='font-size: 1.2em; font-weight: bold; color: {sell_signal_color};'>{sell_signal_text}</div></div>", unsafe_allow_html=True)
 
+                # --- 修改點 3：新增 666戰法專區 ---
+                st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown('<div class="section-title" style="font-size: 1.2em;">😈 666戰法 (日線降維版) 專屬診斷</div>', unsafe_allow_html=True)
+                    
+                    # 取得 666 戰法需要的數值
+                    k60_val = df['K_60'].iloc[-1]
+                    d60_val = df['D_60'].iloc[-1]
+                    k60_prev = df['K_60'].iloc[-2]
+                    d60_prev = df['D_60'].iloc[-2]
+                    ma60_val = df['MA60'].iloc[-1]
+                    
+                    # 判斷 666 邏輯
+                    trend_666 = "<span style='color:#FF4B4B;'>✅ 多頭 (站上季線)</span>" if latest_close > ma60_val else "<span style='color:#00FF00;'>🚨 空頭 (跌破季線)</span>"
+                    
+                    kd_666_status = "⚖️ 中性整理"
+                    # 在日線上，KD(60) 比較難落入 20 以下，故我們放寬到 35 視為低檔區
+                    if k60_val > d60_val and k60_prev <= d60_prev and k60_val < 35:
+                        kd_666_status = "<span style='color:#FF4B4B;'>🔥 低檔黃金交叉 (極佳買點)</span>"
+                    elif k60_val < d60_val and k60_prev >= d60_prev and k60_val > 70:
+                        kd_666_status = "<span style='color:#00FF00;'>🔪 高檔死亡交叉 (停利/賣出)</span>"
+                    elif k60_val < 35:
+                        kd_666_status = "📉 尋找底部區 (等待金叉)"
+                    elif k60_val > 70:
+                        kd_666_status = "📈 高檔強勢區 (留意回檔)"
+                        
+                    st.markdown(f"<div style='font-size:0.95em; margin-bottom:10px;'><b>第一層濾網 (60MA)：</b> {trend_666} &nbsp;&nbsp;|&nbsp;&nbsp; <b>第二層濾網 KD(60,3,3)：</b> {kd_666_status} (K={k60_val:.1f}, D={d60_val:.1f})</div>", unsafe_allow_html=True)
+                    
+                    # 系統綜合建議
+                    advice_text = ""
+                    if latest_close > ma60_val and "黃金交叉" in kd_666_status:
+                        advice_text = "🎉 <b>666戰法進場訊號觸發！</b><br>大趨勢(季線)向上，且長週期 KD 經歷充分洗盤後在低檔發生黃金交叉。這是盈虧比極佳的波段起漲點，可嘗試建立部位，防守點設定為季線跌破。"
+                    elif latest_close < ma60_val:
+                        advice_text = "⚠️ <b>違反 666 戰法紀律！</b><br>目前股價處於季線(60MA)之下，無論短線指標如何，一律不偏多操作，請耐心等待趨勢站回季線。"
+                    elif "死亡交叉" in kd_666_status:
+                        advice_text = "💰 <b>波段高檔停利警戒！</b><br>股價雖強勢，但長週期 KD 已達高檔並發生死亡交叉，代表這波長線動能可能耗盡，建議分批獲利了結或設定嚴格的移動停利點。"
+                    else:
+                        advice_text = "⏳ <b>目前為中間態，不符合進出場條件。</b><br>未觸發 666 戰法的極端關鍵轉折，請依循原本的技術面或籌碼面短線操作，或者空手觀望。"
+                    
+                    st.markdown(f"<div class='strategy-666-box'>{advice_text}</div>", unsafe_allow_html=True)
+
             except Exception as e:
                 st.error(f"資料處理發生錯誤：{e}")
 
@@ -727,7 +778,6 @@ with tab_screener:
     st.markdown("### 🏆 每日台股 S/A/B 級潛力股分級掃描")
     st.markdown("這項工具將優先利用 FinMind 籌碼篩出**「法人實質買超」**的精華股，再逐一利用 Fugle 掃描技術面，完美避開 API 限速。")
     
-    # 使用 session_state 來保存掃描結果
     if 'scan_result_df' not in st.session_state:
         st.session_state['scan_result_df'] = None
     
@@ -739,27 +789,19 @@ with tab_screener:
         st.markdown("<div style='margin-top: 10px; font-size: 0.9em; color: gray;'>※ 掃描過程已加入智能降速防護機制，切換分頁不會遺失分析結果。</div>", unsafe_allow_html=True)
         
     if start_scan:
-        # 重置掃描結果
         st.session_state['scan_result_df'] = None
-        
-        # 建立進度條與狀態文字的佔位符
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 執行掃描 (將進度條物件傳入函數)
         df_result = run_market_screener(progress_bar, status_text)
-        
-        # 將結果存入 session_state
         st.session_state['scan_result_df'] = df_result
         
-    # 如果有掃描結果存在，則顯示 UI
     if st.session_state['scan_result_df'] is not None:
         result_df = st.session_state['scan_result_df']
         
         if not result_df.empty:
             st.success(f"掃描完成！今日共發現 {len(result_df)} 檔具備攻擊潛力的標的。")
             
-            # --- 一鍵帶入戰情室的快速啟動器 ---
             st.markdown("<div style='background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid #555; margin-bottom: 20px;'>", unsafe_allow_html=True)
             st.markdown("#### ⚡ 快速帶入戰情室解析")
             col_launch1, col_launch2 = st.columns([3, 1])
@@ -773,7 +815,6 @@ with tab_screener:
                 st.success(f"✅ **目標 {selected_ticker} 已鎖定！** 請點擊上方【📊 單檔戰情解析】分頁，系統已為您備妥戰情報告。")
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # 顯示表格
             st.dataframe(result_df, use_container_width=True, hide_index=True)
         else:
             st.warning("⏳ 掃描完成。今日台股市場中，無任何標的符合最低試單標準。建議保留現金實力。")
