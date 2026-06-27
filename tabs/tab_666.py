@@ -80,7 +80,7 @@ def render():
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MA60'], line=dict(color='orange', width=2), name="60MA"), row=1, col=1)
                     
                     # 處理未來 10 期扣抵線的 X 軸延伸
-                    future_dates = pd.date_range(df_60.index[-1], periods=11, freq='H')[1:]
+                    future_dates = pd.date_range(df_60.index[-1], periods=11, freq='60min')[1:]
                     future_dates_str = future_dates.strftime('%m-%d %H:%M')
                     fig_60.add_trace(go.Scatter(x=future_dates_str, y=deduct_prices, mode='lines+markers', line=dict(color='white', dash='dash', width=1.5), name="未來10期扣抵"), row=1, col=1)
                     
