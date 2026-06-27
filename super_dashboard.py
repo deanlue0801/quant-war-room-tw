@@ -56,6 +56,7 @@ st.markdown("""
     .signal-buy { background: rgba(0, 255, 0, 0.1); border: 2px solid #00FF00; padding: 10px; border-radius: 8px; text-align: center; margin-top: 5px; }
     .signal-sell { background: rgba(255, 75, 75, 0.1); border: 2px solid #FF4B4B; padding: 10px; border-radius: 8px; text-align: center; margin-top: 5px; }
     .signal-wait { background: rgba(128, 128, 128, 0.1); border: 2px dashed #888; padding: 10px; border-radius: 8px; text-align: center; margin-top: 5px; color: #bbb; }
+    .deduct-box { background: rgba(138, 180, 248, 0.1); padding: 15px; border-radius: 10px; border: 1px solid #8ab4f8; margin-top: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -188,120 +189,14 @@ def color_num(val):
     elif val < 0: return f"<span class='text-green'>{val:,.0f}</span>"
     else: return "0"
 
-# ==========================================
-# 🌟 全市場掃描核心邏輯
-# ==========================================
-def run_market_screener(progress_bar, status_text):
-    try:
-        dl = DataLoader()
-        if FINMIND_TOKEN:
-            try: dl.login_by_token(api_token=FINMIND_TOKEN)
-            except: pass
-        client = RestClient(api_key=FUGLE_API_KEY)
-        
-        end_date = datetime.date.today()
-        start_date = end_date - datetime.timedelta(days=10)
-        
-        status_text.write("⏳ 階段 1/2：從 FinMind 獲取全市場最新籌碼動向...")
-        
-        all_chip = dl.taiwan_stock_institutional_investors(stock_id="", start_date=str(start_date), end_date=str(end_date))
-        if all_chip.empty: 
-            status_text.write("🚨 獲取籌碼資料失敗。")
-            return pd.DataFrame()
-            
-        all_chip['net_shares'] = (all_chip['buy'] - all_chip['sell']) / 1000
-        all_chip['法人'] = all_chip['name'].apply(lambda n: '外資' if '外資' in str(n) or 'Foreign' in str(n) else ('投信' if '投信' in str(n) or 'Trust' in str(n) else ('自營' if '自營' in str(n) or 'Dealer' in str(n) else '其他')))
-        all_chip = all_chip[all_chip['法人'] != '其他']
-        
-        latest_dates = sorted(all_chip['date'].unique())[-5:]
-        chip_5d = all_chip[all_chip['date'].isin(latest_dates)]
-        chip_summary = chip_5d.groupby('stock_id')['net_shares'].sum().reset_index()
-        
-        chip_summary = chip_summary.sort_values(by='net_shares', ascending=False)
-        legal_targets = chip_summary[chip_summary['net_shares'] > 100].head(60)['stock_id'].tolist()
-        
-        if not legal_targets:
-            status_text.write("🚨 查無法人買超標的。")
-            return pd.DataFrame()
-
-        strong_buy_list = []
-        total_targets = len(legal_targets)
-        
-        for i, ticker in enumerate(legal_targets):
-            progress = int((i + 1) / total_targets * 100)
-            progress_bar.progress(progress)
-            status_text.write(f"⏳ 階段 2/2：精密分析技術面... 掃描進度 {i+1}/{total_targets} ({stock_dict.get(ticker, ticker)})")
-            
-            try:
-                tech_start = (end_date - datetime.timedelta(days=360)).strftime('%Y-%m-%d')
-                candles = client.stock.historical.candles(symbol=ticker, timeframe="D", from_=tech_start, to=end_date.strftime('%Y-%m-%d'))
-                df_tech = pd.DataFrame(candles['data'])
-                
-                time.sleep(0.8)
-                
-                if df_tech.empty or len(df_tech) < 60: continue
-                df_tech = df_tech.sort_values('date')
-                df_tech['volume'] = df_tech['volume'] / 1000
-                
-                latest_close = df_tech['close'].iloc[-1]
-                ma20 = df_tech['close'].rolling(20).mean().iloc[-1]
-                ma60 = df_tech['close'].rolling(60).mean().iloc[-1]
-                latest_vol = df_tech['volume'].iloc[-1]
-                avg_vol_5 = df_tech['volume'].rolling(5).mean().iloc[-1]
-                high_52w = df_tech['high'].max()
-                low_52w = df_tech['low'].min()
-                base_pct = ((latest_close - low_52w) / (high_52w - low_52w)) * 100 if high_52w != low_52w else 50
-                
-                chip_val = chip_summary[chip_summary['stock_id'] == ticker]['net_shares'].values[0]
-                
-                cond_base = base_pct < 60
-                cond_trend = (latest_close > ma20) and (latest_close > ma60)
-                cond_vol = latest_vol > (avg_vol_5 * 1.5)
-                cond_chip = chip_val > 300
-                
-                score = sum([cond_base, cond_trend, cond_vol, cond_chip])
-                
-                if score >= 2 and latest_vol > 500:
-                    name = stock_dict.get(ticker, ticker)
-                    if score == 4: grade = "🔥 S級 (滿分)"
-                    elif score == 3: grade = "🚀 A級 (強勢)"
-                    else: grade = "🟢 B級 (試單)"
-                    
-                    matched = []
-                    if cond_base: matched.append("低基期")
-                    if cond_trend: matched.append("站上均線")
-                    if cond_vol: matched.append("量能點火")
-                    if cond_chip: matched.append("法人大買")
-                    
-                    strong_buy_list.append({
-                        "代號": ticker, "名稱": name, "等級": grade, "分數": score, 
-                        "收盤價": latest_close, "位階": f"{base_pct:.1f}%", 
-                        "成交量(張)": int(latest_vol), 
-                        "5日法人買超": int(chip_val),
-                        "符合條件": ", ".join(matched)
-                    })
-            except:
-                continue
-                
-        df_result = pd.DataFrame(strong_buy_list)
-        if not df_result.empty:
-            df_result = df_result.sort_values(by=["分數", "5日法人買超"], ascending=[False, False])
-            
-        status_text.write("✅ 掃描完成！")
-        progress_bar.empty() 
-        return df_result
-    except Exception as e:
-        status_text.write(f"🚨 掃描過程發生錯誤: {e}")
-        return pd.DataFrame()
-
 
 # ==========================================
-# 2. 雙分頁架構建立
+# 2. 雙分頁架構建立 (移除了黑馬掃描)
 # ==========================================
-tab_monitor, tab_screener = st.tabs(["📊 單檔戰情解析 (含紀律訊號)", "🏆 全市場黑馬分級掃描"])
+tab_monitor, tab_666 = st.tabs(["📊 單檔戰情解析", "🎯 666戰法 (60分K)"])
 
 # ==========================================
-# TAB 1: 單檔戰情解析
+# TAB 1: 單檔戰情解析 (原汁原味完整保留)
 # ==========================================
 with tab_monitor:
     if 'search_history' not in st.session_state:
@@ -313,7 +208,7 @@ with tab_monitor:
             if len(st.session_state['search_history']) > 8:
                 st.session_state['search_history'].pop()
 
-    # --- 調整點 1：使用 st.form 包覆，解決按 Enter 無法搜尋的問題 ---
+    # --- 解決按 Enter 無法搜尋的問題 ---
     with st.form(key='search_form', clear_on_submit=False):
         col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1.5, 1.5, 6])
         with col_ctrl1:
@@ -354,7 +249,7 @@ with tab_monitor:
         
         with st.spinner(f'鎖定目標 [{display_title}] ... 啟動戰情解析中...'):
             try:
-                # --- [原本的日線技術面分析 (保留)] ---
+                # --- [原本的日線技術面分析] ---
                 df_full = fetch_tech_data_fugle(raw_ticker).copy()
                 
                 if len(df_full) < 60: 
@@ -730,132 +625,163 @@ with tab_monitor:
                     st.markdown(f'<div class="section-title" style="color: {script_color}; font-size: 1.15em; border-bottom: 1px solid #555; padding-bottom: 8px;">🔮 法人明日劇本推演：{script_title}</div>', unsafe_allow_html=True)
                     for act in script_actions: st.markdown(f"<div style='font-size: 0.95em; margin-top: 8px; line-height: 1.5;'>{act}</div>", unsafe_allow_html=True)
 
-                # --- 修改點 3：新增【正宗 666 戰法 (60分K層級)】戰略儀表板 ---
-                st.markdown("<hr style='margin: 15px 0;'>", unsafe_allow_html=True)
-                with st.container(border=True):
-                    st.markdown('<div class="section-title" style="font-size: 1.4em; color: #FF8C00;">🎯 正宗 666 戰法 (60分K線) 戰略儀表板</div>', unsafe_allow_html=True)
-                    
-                    df_60m = fetch_tech_data_fugle_60m(raw_ticker)
-                    
-                    if not df_60m.empty and len(df_60m) >= 70:
-                        # 1. 計算 60分K 的 60MA
-                        df_60m['MA60'] = df_60m['Close'].rolling(window=60).mean()
-                        
-                        # 2. 計算 60分K 的 KD(60,3,3)
-                        low_min_60 = df_60m['Low'].rolling(window=60).min()
-                        high_max_60 = df_60m['High'].rolling(window=60).max()
-                        df_60m['RSV_60'] = 100 * ((df_60m['Close'] - low_min_60) / (high_max_60 - low_min_60))
-                        df_60m['K_60'] = df_60m['RSV_60'].ewm(com=2, adjust=False).mean()
-                        df_60m['D_60'] = df_60m['K_60'].ewm(com=2, adjust=False).mean()
-                        
-                        latest_60m_close = df_60m['Close'].iloc[-1]
-                        ma60_60m = df_60m['MA60'].iloc[-1]
-                        k_60m = df_60m['K_60'].iloc[-1]
-                        d_60m = df_60m['D_60'].iloc[-1]
-                        k_60m_prev = df_60m['K_60'].iloc[-2]
-                        d_60m_prev = df_60m['D_60'].iloc[-2]
-                        
-                        # 3. 扣抵雷達預判 (未來 10 期的舊價格)
-                        # 當前 60MA 包含了最後 60 根。未來 1~10 根會剔除倒數第 60 ~ 51 根的價格
-                        deduct_prices = df_60m['Close'].iloc[-60:-50].values
-                        max_deduct = deduct_prices.max()
-                        min_deduct = deduct_prices.min()
-                        
-                        deduct_text = "⚖️ 均線走平震盪"
-                        deduct_color = "#FFA500"
-                        if latest_60m_close > max_deduct:
-                            deduct_text = "📈 未來 10 期將「扣低」，均線強力上彎助漲！"
-                            deduct_color = "#FF4B4B"
-                        elif latest_60m_close < min_deduct:
-                            deduct_text = "📉 未來 10 期將「扣高」，均線下彎形成沉重反壓！"
-                            deduct_color = "#00FF00"
-                        
-                        # 狀態顯示 UI
-                        col_666_1, col_666_2, col_666_3 = st.columns(3)
-                        with col_666_1:
-                            trend_status = "✅ 多頭 (站上 60MA)" if latest_60m_close > ma60_60m else "🚨 空頭 (跌破 60MA)"
-                            trend_c = "#FF4B4B" if latest_60m_close > ma60_60m else "#00FF00"
-                            st.markdown(f"<div style='border:1px solid #555; padding:10px; border-radius:5px;'><b>① 趨勢濾網 (60MA)</b><br><span style='color:{trend_c}; font-size:1.1em;'>{trend_status}</span><br><span style='font-size:0.8em; color:gray;'>收盤 {latest_60m_close:.2f} / MA {ma60_60m:.2f}</span></div>", unsafe_allow_html=True)
-                        with col_666_2:
-                            kd_status = "⚖️ 中性整理"
-                            kd_c = "white"
-                            if k_60m > d_60m and k_60m_prev <= d_60m_prev: kd_status, kd_c = "🔥 黃金交叉", "#FF4B4B"
-                            elif k_60m < d_60m and k_60m_prev >= d_60m_prev: kd_status, kd_c = "🔪 死亡交叉", "#00FF00"
-                            st.markdown(f"<div style='border:1px solid #555; padding:10px; border-radius:5px;'><b>② 動能濾網 KD(60,3,3)</b><br><span style='color:{kd_c}; font-size:1.1em;'>{kd_status}</span><br><span style='font-size:0.8em; color:gray;'>K: {k_60m:.1f} / D: {d_60m:.1f}</span></div>", unsafe_allow_html=True)
-                        with col_666_3:
-                            st.markdown(f"<div style='border:1px solid #555; padding:10px; border-radius:5px;'><b>③ 未來 10 期扣抵預判</b><br><span style='color:{deduct_color}; font-size:1.0em;'>{deduct_text}</span><br><span style='font-size:0.8em; color:gray;'>目前價位對比 10 期舊價高低</span></div>", unsafe_allow_html=True)
-
-                        # 4. 買進 / 賣出 明確提示 UI
-                        st.markdown("<div style='margin-top: 15px;'><b>💻 系統訊號判定：</b></div>", unsafe_allow_html=True)
-                        
-                        signal_html = ""
-                        if latest_60m_close > ma60_60m and k_60m > d_60m and k_60m_prev <= d_60m_prev and k_60m < 35:
-                            # 買點：站上 60MA，且 KD 在低檔 (小於35) 黃金交叉
-                            signal_html = "<div class='signal-buy'><h2>🔥 【極佳買點】進場訊號觸發！</h2><p style='margin-bottom:0;'>股價受 60MA 趨勢保護，且經歷充分洗盤後，長週期 KD 在低檔黃金交叉。<br><b>策略：</b>建議立刻建立波段部位，停損防守點設於 60MA 之下。</p></div>"
-                        elif latest_60m_close < ma60_60m:
-                            # 賣點 1：跌破 60MA 停損
-                            signal_html = "<div class='signal-sell'><h2>🚨 【強制停損 / 禁做多】跌破 60MA</h2><p style='margin-bottom:0;'>股價已落入 60MA 之下，波段趨勢轉弱。<br><b>策略：</b>嚴格遵守紀律，手中有多單應立即停損/減碼，空手者嚴禁進場接刀。</p></div>"
-                        elif latest_60m_close > ma60_60m and k_60m < d_60m and k_60m_prev >= d_60m_prev and k_60m > 70:
-                            # 賣點 2：高檔死亡交叉 停利
-                            signal_html = "<div class='signal-sell'><h2>💰 【波段停利警戒】高檔動能衰退</h2><p style='margin-bottom:0;'>股價雖強勢，但 KD 已達高檔並出現死亡交叉，買盤動能即將耗盡。<br><b>策略：</b>強烈建議分批獲利了結，或設定極為嚴格的移動停利點。</p></div>"
-                        else:
-                            # 等待 / 中性
-                            action_text = "目前不符合 666 戰法的極端發動點。若已在車上，請沿著趨勢續抱；若為空手，請耐心等待 KD 回落洗盤。"
-                            if latest_60m_close > ma60_60m and latest_60m_close > max_deduct: action_text += " (均線持續助漲中)"
-                            signal_html = f"<div class='signal-wait'><h3>⏳ 觀望中：尚未浮現極端轉折點</h3><p style='margin-bottom:0;'>{action_text}</p></div>"
-                            
-                        st.markdown(signal_html, unsafe_allow_html=True)
-                        
-                    else:
-                        st.warning("🚨 無法取得足夠的 60 分鐘 K 線資料進行 666 戰法運算。")
-
             except Exception as e:
                 st.error(f"資料處理發生錯誤：{e}")
 
-# ==========================================
-# TAB 2: 全市場黑馬分級掃描器
-# ==========================================
-with tab_screener:
-    st.markdown("### 🏆 每日台股 S/A/B 級潛力股分級掃描")
-    st.markdown("這項工具將優先利用 FinMind 籌碼篩出**「法人實質買超」**的精華股，再逐一利用 Fugle 掃描技術面，完美避開 API 限速。")
-    
-    if 'scan_result_df' not in st.session_state:
-        st.session_state['scan_result_df'] = None
-    
-    col_scan1, col_scan2 = st.columns([1, 4])
-    with col_scan1:
-        start_scan = st.button("🚀 執行/重新掃描", use_container_width=True, type="primary")
-            
-    with col_scan2:
-        st.markdown("<div style='margin-top: 10px; font-size: 0.9em; color: gray;'>※ 掃描過程已加入智能降速防護機制，切換分頁不會遺失分析結果。</div>", unsafe_allow_html=True)
-        
-    if start_scan:
-        st.session_state['scan_result_df'] = None
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        df_result = run_market_screener(progress_bar, status_text)
-        st.session_state['scan_result_df'] = df_result
-        
-    if st.session_state['scan_result_df'] is not None:
-        result_df = st.session_state['scan_result_df']
-        
-        if not result_df.empty:
-            st.success(f"掃描完成！今日共發現 {len(result_df)} 檔具備攻擊潛力的標的。")
-            
-            st.markdown("<div style='background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid #555; margin-bottom: 20px;'>", unsafe_allow_html=True)
-            st.markdown("#### ⚡ 快速帶入戰情室解析")
-            col_launch1, col_launch2 = st.columns([3, 1])
-            
-            options = result_df['代號'].tolist()
-            selected_ticker = col_launch1.selectbox("請選擇您有興趣的掃描結果：", options, format_func=lambda x: f"{x} {stock_dict.get(x, '')}")
-            
-            if col_launch2.button("傳送並解析 🎯", use_container_width=True):
-                st.session_state['target_ticker'] = selected_ticker
-                st.session_state['run_cross_tab_analysis'] = True
-                st.success(f"✅ **目標 {selected_ticker} 已鎖定！** 請點擊上方【📊 單檔戰情解析】分頁，系統已為您備妥戰情報告。")
-            st.markdown("</div>", unsafe_allow_html=True)
 
-            st.dataframe(result_df, use_container_width=True, hide_index=True)
-        else:
-            st.warning("⏳ 掃描完成。今日台股市場中，無任何標的符合最低試單標準。建議保留現金實力。")
+# ==========================================
+# TAB 2: 666戰法 (60分K分析)
+# ==========================================
+with tab_666:
+    st.header("🎯 正宗 666 戰法 (60分K線 扣抵雷達)")
+    
+    # 解決按 Enter 搜尋：使用 st.form
+    with st.form(key='search_form_666', clear_on_submit=False):
+        col_666_1, col_666_2 = st.columns([1.5, 7.5])
+        with col_666_1:
+            ticker_60 = st.text_input("搜尋", "", label_visibility="collapsed", placeholder="輸入代號並按 Enter")
+        with col_666_2:
+            submit_666 = st.form_submit_button("開始 666 戰法解析")
+        
+    if submit_666 and ticker_60:
+        raw_ticker_60 = name_to_id_dict.get(ticker_60.strip(), ticker_60.strip()) if ticker_60.strip() not in stock_dict else ticker_60.strip()
+        stock_name_60 = stock_dict.get(raw_ticker_60, "")
+        display_title_60 = f"{raw_ticker_60} {stock_name_60}" if stock_name_60 else raw_ticker_60
+        
+        with st.spinner(f'解析 {display_title_60} 60分K線中...'):
+            df_60 = fetch_tech_data_fugle_60m(raw_ticker_60)
+            
+            if df_60.empty or len(df_60) < 60:
+                st.error(f"🚨 無法取得 [{display_title_60}] 足夠的 60 分鐘 K 線資料。")
+            else:
+                # 1. 計算 60MA
+                df_60['MA60'] = df_60['Close'].rolling(window=60).mean()
+                
+                # 2. 計算 KD(60,3,3)
+                low_min_60 = df_60['Low'].rolling(window=60).min()
+                high_max_60 = df_60['High'].rolling(window=60).max()
+                df_60['RSV_60'] = 100 * ((df_60['Close'] - low_min_60) / (high_max_60 - low_min_60))
+                df_60['K_60'] = df_60['RSV_60'].ewm(com=2, adjust=False).mean()
+                df_60['D_60'] = df_60['K_60'].ewm(com=2, adjust=False).mean()
+                
+                latest_60m_close = df_60['Close'].iloc[-1]
+                ma60_60m = df_60['MA60'].iloc[-1]
+                k_60m = df_60['K_60'].iloc[-1]
+                d_60m = df_60['D_60'].iloc[-1]
+                k_60m_prev = df_60['K_60'].iloc[-2]
+                d_60m_prev = df_60['D_60'].iloc[-2]
+                
+                # 3. 扣抵雷達預判 (未來 10 期)
+                # 倒數第 60 根到倒數第 51 根的舊價格
+                deduct_prices = df_60['Close'].iloc[-60:-50].values
+                avg_deduct = deduct_prices.mean()
+                
+                # 4. 繪製 60分K 圖表
+                st.markdown(f"### {display_title_60} - 60 分鐘 K 線圖")
+                fig_60 = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
+                
+                # K線與 60MA
+                fig_60.add_trace(go.Candlestick(x=df_60.index, open=df_60['Open'], high=df_60['High'], low=df_60['Low'], close=df_60['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
+                fig_60.add_trace(go.Scatter(x=df_60.index, y=df_60['MA60'], line=dict(color='orange', width=2), name="60MA"), row=1, col=1)
+                
+                # 未來 10 期扣抵虛線
+                future_dates = pd.date_range(df_60.index[-1], periods=11, freq='60min')[1:]
+                fig_60.add_trace(go.Scatter(x=future_dates, y=deduct_prices, mode='lines+markers', line=dict(color='white', dash='dash'), name="未來10期扣抵值"), row=1, col=1)
+                
+                # KD(60,3,3) 圖表
+                fig_60.add_trace(go.Scatter(x=df_60.index, y=df_60['K_60'], line=dict(color='yellow', width=1.5), name='K(60)'), row=2, col=1)
+                fig_60.add_trace(go.Scatter(x=df_60.index, y=df_60['D_60'], line=dict(color='cyan', width=1.5), name='D(60)'), row=2, col=1)
+                fig_60.add_hline(y=80, line_dash="dot", line_color="red", row=2, col=1)
+                fig_60.add_hline(y=20, line_dash="dot", line_color="green", row=2, col=1)
+                
+                fig_60.update_layout(height=600, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_rangeslider_visible=False)
+                st.plotly_chart(fig_60, use_container_width=True)
+                
+                # 5. 數據判定與 UI 顯示
+                st.markdown("<hr style='margin: 15px 0;'>", unsafe_allow_html=True)
+                col_666_info1, col_666_info2 = st.columns(2)
+                
+                with col_666_info1:
+                    st.markdown("<div class='section-title'>趨勢與動能分析</div>", unsafe_allow_html=True)
+                    trend_status = "✅ 多頭 (大於 60MA)" if latest_60m_close > ma60_60m else "🚨 空頭 (小於 60MA)"
+                    trend_color = "#FF4B4B" if latest_60m_close > ma60_60m else "#00FF00"
+                    
+                    kd_666_status = "⚖️ 中性整理"
+                    kd_color = "gray"
+                    if k_60m > d_60m and k_60m_prev <= d_60m_prev: kd_666_status, kd_color = "🔥 黃金交叉", "#FF4B4B"
+                    elif k_60m < d_60m and k_60m_prev >= d_60m_prev: kd_666_status, kd_color = "🔪 死亡交叉", "#00FF00"
+                    
+                    st.markdown(f"""
+                    <div style='background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid #555; height: 100%;'>
+                        <div style='margin-bottom: 10px;'><b>📍 目前收盤價：</b> {latest_60m_close:.2f}</div>
+                        <div style='margin-bottom: 10px;'><b>📍 60MA (中線趨勢)：</b> <span style='color:{trend_color}; font-weight:bold;'>{trend_status}</span></div>
+                        <div><b>📍 KD(60,3,3) 狀態：</b> <span style='color:{kd_color}; font-weight:bold;'>{kd_666_status}</span> (K={k_60m:.1f}, D={d_60m:.1f})</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with col_666_info2:
+                    st.markdown("<div class='section-title'>未來 10 期扣抵預判雷達</div>", unsafe_allow_html=True)
+                    deduct_text = "⚖️ 均線走平震盪"
+                    deduct_color = "#FFA500"
+                    if latest_60m_close > avg_deduct:
+                        deduct_text = "📈 未來 10 期將「扣低」，均線強力上彎助漲！"
+                        deduct_color = "#FF4B4B"
+                    elif latest_60m_close < avg_deduct:
+                        deduct_text = "📉 未來 10 期將「扣高」，均線下彎形成沉重反壓！"
+                        deduct_color = "#00FF00"
+                        
+                    st.markdown(f"""
+                    <div class='deduct-box' style='height: 100%; border-color: {deduct_color};'>
+                        <h4 style='color: {deduct_color}; margin-top: 0;'>{deduct_text}</h4>
+                        <div style='font-size: 0.9em; color: gray;'>
+                            目前收盤價：{latest_60m_close:.2f}<br>
+                            未來 10 期被剔除的舊價格平均：{avg_deduct:.2f}
+                        </div>
+                        <div style='margin-top: 10px; font-size: 0.9em;'>
+                            <b>說明：</b>因為目前的價格大於(或小於)過去要被扣除的舊價格，這會在接下來的 10 個小時內，將 60MA 平均線向上推升(或向下拉扯)。
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # 6. 最終進出場訊號
+                st.markdown("<h3 style='margin-top: 20px;'>💻 666 系統交易訊號</h3>", unsafe_allow_html=True)
+                
+                if latest_60m_close > ma60_60m and k_60m > d_60m and k_60m_prev <= d_60m_prev and k_60m < 35:
+                    st.markdown("""
+                    <div class='signal-buy'>
+                        <h2>🔥 【極佳買點】進場訊號觸發！</h2>
+                        <p style='font-size: 0.6em; color: white; font-weight: normal; margin-bottom: 0;'>
+                        股價受 60MA 趨勢保護，且經歷充分洗盤後，長週期 KD 在低檔黃金交叉。<br>
+                        <b>策略建議：</b>建立波段部位，停損防守點設於 60MA 之下。
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                elif latest_60m_close < ma60_60m:
+                    st.markdown("""
+                    <div class='signal-sell'>
+                        <h2>🚨 【強制停損 / 禁做多】跌破 60MA</h2>
+                        <p style='font-size: 0.6em; color: white; font-weight: normal; margin-bottom: 0;'>
+                        股價已落入 60MA 之下，波段趨勢轉弱。<br>
+                        <b>策略建議：</b>嚴格遵守紀律，手中有多單應立即停損/減碼，空手者嚴禁進場接刀。
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                elif latest_60m_close > ma60_60m and k_60m < d_60m and k_60m_prev >= d_60m_prev and k_60m > 70:
+                    st.markdown("""
+                    <div class='signal-sell'>
+                        <h2>💰 【波段停利警戒】高檔動能衰退</h2>
+                        <p style='font-size: 0.6em; color: white; font-weight: normal; margin-bottom: 0;'>
+                        股價雖強勢，但 KD 已達高檔並出現死亡交叉，買盤動能即將耗盡。<br>
+                        <b>策略建議：</b>強烈建議分批獲利了結，或設定極為嚴格的移動停利點。
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    action_text = "目前不符合 666 戰法的極端發動點。若已在車上，請沿著趨勢續抱；若為空手，請耐心等待 KD 回落洗盤。"
+                    if latest_60m_close > ma60_60m and latest_60m_close > avg_deduct: action_text += "<br><span style='color:#FF4B4B;'>(註：目前 60MA 持續向上助漲中)</span>"
+                    st.markdown(f"""
+                    <div class='signal-wait'>
+                        <h3>⏳ 觀望中：尚未浮現極端轉折點</h3>
+                        <p style='font-size: 0.9em; margin-bottom: 0;'>{action_text}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
