@@ -16,7 +16,7 @@ def render():
         with col_666_2:
             submit_666 = st.form_submit_button("🔥 啟動 666 戰法", use_container_width=True)
         with col_666_3:
-            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 專注 60分K線，結合 60MA、KD 與 MACD 精準捕捉波段轉折點</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 專注 60分K線，結合 60MA、量能、KD 與 MACD 精準捕捉波段轉折點</div>", unsafe_allow_html=True)
         
     if submit_666 and ticker_60:
         raw_ticker_60 = name_to_id_dict.get(ticker_60.strip(), ticker_60.strip()) if ticker_60.strip() not in stock_dict else ticker_60.strip()
@@ -116,8 +116,8 @@ def render():
                     
                     x_dates = df_60.index.strftime('%m-%d %H:%M').tolist()
                     
-                    # 變更為 3 列的子圖表，加入 MACD 空間
-                    fig_60 = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.25, 0.25])
+                    # 變更為 4 列的子圖表，加入成交量空間
+                    fig_60 = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.2, 0.2, 0.2])
                     
                     # Row 1: K線與 60MA
                     fig_60.add_trace(go.Candlestick(x=x_dates, open=df_60['Open'], high=df_60['High'], low=df_60['Low'], close=df_60['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
@@ -132,21 +132,25 @@ def render():
                     
                     fig_60.add_trace(go.Scatter(x=ma_proj_x, y=ma_proj_y, mode='lines', line=dict(color='orange', dash='dash', width=2), name="預測60MA(平盤)"), row=1, col=1)
                     
-                    # Row 2: KD(60,3,3)
-                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['K_60'], line=dict(color='yellow', width=1.5), name='K(60)'), row=2, col=1)
-                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['D_60'], line=dict(color='cyan', width=1.5), name='D(60)'), row=2, col=1)
-                    fig_60.add_hline(y=80, line_dash="dot", line_color="red", row=2, col=1)
-                    fig_60.add_hline(y=20, line_dash="dot", line_color="green", row=2, col=1)
+                    # Row 2: 成交量
+                    colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df_60.iterrows()]
+                    fig_60.add_trace(go.Bar(x=x_dates, y=df_60['Volume'], marker_color=colors_vol, name="成交量"), row=2, col=1)
 
-                    # Row 3: MACD
+                    # Row 3: KD(60,3,3)
+                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['K_60'], line=dict(color='yellow', width=1.5), name='K(60)'), row=3, col=1)
+                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['D_60'], line=dict(color='cyan', width=1.5), name='D(60)'), row=3, col=1)
+                    fig_60.add_hline(y=80, line_dash="dot", line_color="red", row=3, col=1)
+                    fig_60.add_hline(y=20, line_dash="dot", line_color="green", row=3, col=1)
+
+                    # Row 4: MACD
                     colors_macd = ['#FF4B4B' if val >= 0 else '#00FF00' for val in df_60['OSC']]
-                    fig_60.add_trace(go.Bar(x=x_dates, y=df_60['OSC'], marker_color=colors_macd, name="MACD柱"), row=3, col=1)
-                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MACD'], line=dict(color='white', width=1.5), name='MACD'), row=3, col=1)
-                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['Signal'], line=dict(color='yellow', width=1.5), name='Signal'), row=3, col=1)
+                    fig_60.add_trace(go.Bar(x=x_dates, y=df_60['OSC'], marker_color=colors_macd, name="MACD柱"), row=4, col=1)
+                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MACD'], line=dict(color='white', width=1.5), name='MACD'), row=4, col=1)
+                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['Signal'], line=dict(color='yellow', width=1.5), name='Signal'), row=4, col=1)
                     
                     fig_60.update_xaxes(type='category', nticks=12, showgrid=True, gridwidth=1, gridcolor='#333')
                     fig_60.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333')
-                    fig_60.update_layout(height=750, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
+                    fig_60.update_layout(height=850, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
                     st.plotly_chart(fig_60, use_container_width=True)
 
             with col_right:
