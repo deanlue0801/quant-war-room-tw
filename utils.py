@@ -120,15 +120,33 @@ def fetch_tech_data_fugle_60m(ticker):
         client = RestClient(api_key=FUGLE_API_KEY)
         end_date = datetime.date.today()
         start_date = end_date - datetime.timedelta(days=90)
+        
+        # 1. 抓取歷史 60分K (Fugle 歷史資料通常只有到昨日)
         kwargs = {"symbol": ticker, "timeframe": "60", "from": start_date.strftime('%Y-%m-%d'), "to": end_date.strftime('%Y-%m-%d')}
-        candles = client.stock.historical.candles(**kwargs)
-        df = pd.DataFrame(candles['data'])
+        hist_candles = client.stock.historical.candles(**kwargs)
+        df_hist = pd.DataFrame(hist_candles.get('data', []))
+        
+        # 2. 抓取今日盤中 60分K (Fugle 即時 K 線)
+        try:
+            intra_candles = client.stock.intraday.candles(symbol=ticker, timeframe="60")
+            df_intra = pd.DataFrame(intra_candles.get('data', []))
+        except Exception:
+            df_intra = pd.DataFrame()
+
+        # 3. 合併歷史與盤中資料
+        df = pd.concat([df_hist, df_intra], ignore_index=True)
+        
         if not df.empty:
             df = df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
             df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None) 
+            
+            # 確保不會有重複的時間點（以防盤中與歷史資料重疊）
+            df = df.drop_duplicates(subset=['Date'], keep='last')
+            
             return df.set_index('Date').sort_index()[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+            
         return pd.DataFrame()
-    except Exception:
+    except Exception as e:
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600, show_spinner=False)
