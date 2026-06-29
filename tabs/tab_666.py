@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import utils
@@ -25,6 +26,19 @@ def render():
         with st.spinner(f'鎖定目標 [{display_title_60}] ... 繪製 60分K 戰略圖中...'):
             df_60 = utils.fetch_tech_data_fugle_60m(raw_ticker_60)
             
+            # --- 強制清理資料，防止 NoneType 造成運算錯誤 ---
+            if not df_60.empty:
+                df_60 = df_60.loc[:, ~df_60.columns.duplicated()]
+                for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                    if col in df_60.columns:
+                        df_60[col] = pd.to_numeric(df_60[col], errors='coerce')
+                # 填補空缺值
+                df_60[['Open', 'High', 'Low', 'Close']] = df_60[['Open', 'High', 'Low', 'Close']].ffill()
+                if 'Volume' in df_60.columns:
+                    df_60['Volume'] = df_60['Volume'].fillna(0)
+                df_60 = df_60.dropna(subset=['Close'])
+            # ----------------------------------------------------
+            
             if df_60.empty or len(df_60) < 60:
                 st.error(f"🚨 無法取得 [{display_title_60}] 足夠的 60 分鐘 K 線資料。")
                 return
@@ -32,13 +46,12 @@ def render():
             # 1. 計算 60MA
             df_60['MA60'] = df_60['Close'].rolling(window=60).mean()
             
-# 2. 計算精準券商版 KD(60,3,3)
+            # 2. 計算 KD(60,3,3) 券商標準版 (強制初始值設為 50)
             low_min_60 = df_60['Low'].rolling(window=60).min()
             high_max_60 = df_60['High'].rolling(window=60).max()
             df_60['RSV_60'] = 100 * ((df_60['Close'] - low_min_60) / (high_max_60 - low_min_60))
-            df_60['RSV_60'] = df_60['RSV_60'].fillna(50) # 防呆：若無資料預設50
+            df_60['RSV_60'] = df_60['RSV_60'].fillna(50)
             
-            # 使用迴圈強制給定初始值 50 (與台灣看盤軟體完全一致的演算法)
             k_list, d_list = [], []
             for i, rsv in enumerate(df_60['RSV_60']):
                 if i == 0 or pd.isna(rsv):
@@ -47,19 +60,35 @@ def render():
                 else:
                     k_list.append((2/3) * k_list[-1] + (1/3) * rsv)
                     d_list.append((2/3) * d_list[-1] + (1/3) * k_list[-1])
-                    
             df_60['K_60'] = k_list
             df_60['D_60'] = d_list
             
+            # 取出純數值，確保純數學運算安全
+            closes = df_60['Close'].values
+            latest_60m_close = float(closes[-1])
+            prev_close = float(closes[-2])
+            price_change = latest_60m_close - prev_close
+            change_pct = (price_change / prev_close) * 100
+            color = "#FF4B4B" if price_change >= 0 else "#00FF00"
+            sign = "▲" if price_change >= 0 else "▼"
+            latest_vol = float(df_60['Volume'].values[-1])
+            
+            ma60_60m = float(df_60['MA60'].values[-1])
+            k_60m = float(df_60['K_60'].values[-1])
+            d_60m = float(df_60['D_60'].values[-1])
+            k_60m_prev = float(df_60['K_60'].values[-2])
+            d_60m_prev = float(df_60['D_60'].values[-2])
+            
             # 3. 未來 10 期真實 60MA 預測演算 (假設股價維持現價平盤)
             future_ma60 = []
-            current_sum = df_60['Close'].iloc[-60:].sum()
+            current_sum = float(closes[-60:].sum())
             for i in range(10):
-                dropped_price = df_60['Close'].iloc[-60 + i]
+                dropped_price = float(closes[-60 + i])
                 current_sum = current_sum - dropped_price + latest_60m_close
                 future_ma60.append(current_sum / 60)
                 
-            avg_deduct = df_60['Close'].iloc[-60:-50].mean()
+            deduct_prices = closes[-60:-50]
+            avg_deduct = float(deduct_prices.mean())
             
             # --- 畫面頂部資訊 ---
             last_date = df_60.index[-1]
@@ -82,7 +111,7 @@ def render():
                     fig_60.add_trace(go.Candlestick(x=x_dates, open=df_60['Open'], high=df_60['High'], low=df_60['Low'], close=df_60['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MA60'], line=dict(color='orange', width=2), name="60MA"), row=1, col=1)
                     
-                    # 將預測的 MA 完美接續在原本的 60MA 之後 (修正 freq 為 60min)
+                    # 預測的 MA 完美接續在原本的 60MA 之後
                     future_dates = pd.date_range(df_60.index[-1] + pd.Timedelta(hours=1), periods=10, freq='60min')
                     future_dates_str = future_dates.strftime('%m-%d %H:%M').tolist()
                     
