@@ -120,7 +120,8 @@ def render():
                     # 未來 10 期扣抵舊價格 (白色虛線)
                     future_dates = pd.date_range(df_60.index[-1] + pd.Timedelta(hours=1), periods=10, freq='60min')
                     future_dates_str = future_dates.strftime('%m-%d %H:%M').tolist()
-                    fig_60.add_trace(go.Scatter(x=future_dates_str, y=deduct_prices, mode='lines+markers', line=dict(color='white', dash='dash', width=1.5), name="未來10期舊價格"), row=1, col=1)
+                    ma_proj_x = [x_dates[-1]] + future_dates_str
+                    ma_proj_y = [ma60_60m] + future_ma60
                     
                     # Row 2: 成交量
                     colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df_60.iterrows()]
