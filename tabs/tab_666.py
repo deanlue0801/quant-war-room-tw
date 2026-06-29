@@ -53,9 +53,15 @@ def render():
             k_60m_prev = df_60['K_60'].iloc[-2]
             d_60m_prev = df_60['D_60'].iloc[-2]
             
-            # 3. 扣抵雷達預判 (未來 10 期)
-            deduct_prices = df_60['Close'].iloc[-60:-50].values
-            avg_deduct = deduct_prices.mean()
+            # 3. 未來 10 期真實 60MA 預測演算 (假設股價維持現價平盤)
+            future_ma60 = []
+            current_sum = df_60['Close'].iloc[-60:].sum()
+            for i in range(10):
+                dropped_price = df_60['Close'].iloc[-60 + i]
+                current_sum = current_sum - dropped_price + latest_60m_close
+                future_ma60.append(current_sum / 60)
+                
+            avg_deduct = df_60['Close'].iloc[-60:-50].mean()
             
             # --- 畫面頂部資訊 ---
             last_date = df_60.index[-1]
@@ -69,27 +75,29 @@ def render():
             
             with col_left:
                 with st.container(border=True):
-                    st.markdown('<div class="section-title">60分K線與支撐壓力可視化</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="section-title">60分K線與均線預測可視化</div>', unsafe_allow_html=True)
                     
-                    # 解決 K 線鬆散的核心：將 X 軸轉為字串分類格式，去除盤後與假日的空隙
-                    x_dates = df_60.index.strftime('%m-%d %H:%M')
+                    x_dates = df_60.index.strftime('%m-%d %H:%M').tolist()
                     
                     fig_60 = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_heights=[0.7, 0.3])
                     
                     fig_60.add_trace(go.Candlestick(x=x_dates, open=df_60['Open'], high=df_60['High'], low=df_60['Low'], close=df_60['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MA60'], line=dict(color='orange', width=2), name="60MA"), row=1, col=1)
                     
-                    # 處理未來 10 期扣抵線的 X 軸延伸
-                    future_dates = pd.date_range(df_60.index[-1], periods=11, freq='60min')[1:]
-                    future_dates_str = future_dates.strftime('%m-%d %H:%M')
-                    fig_60.add_trace(go.Scatter(x=future_dates_str, y=deduct_prices, mode='lines+markers', line=dict(color='white', dash='dash', width=1.5), name="未來10期扣抵"), row=1, col=1)
+                    # 將預測的 MA 完美接續在原本的 60MA 之後 (修正 freq 為 60min)
+                    future_dates = pd.date_range(df_60.index[-1] + pd.Timedelta(hours=1), periods=10, freq='60min')
+                    future_dates_str = future_dates.strftime('%m-%d %H:%M').tolist()
+                    
+                    ma_proj_x = [x_dates[-1]] + future_dates_str
+                    ma_proj_y = [ma60_60m] + future_ma60
+                    
+                    fig_60.add_trace(go.Scatter(x=ma_proj_x, y=ma_proj_y, mode='lines', line=dict(color='orange', dash='dash', width=2), name="預測60MA(平盤)"), row=1, col=1)
                     
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['K_60'], line=dict(color='yellow', width=1.5), name='K(60)'), row=2, col=1)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['D_60'], line=dict(color='cyan', width=1.5), name='D(60)'), row=2, col=1)
                     fig_60.add_hline(y=80, line_dash="dot", line_color="red", row=2, col=1)
                     fig_60.add_hline(y=20, line_dash="dot", line_color="green", row=2, col=1)
                     
-                    # 設定 category 使圖表緊密固定
                     fig_60.update_xaxes(type='category', nticks=12, showgrid=True, gridwidth=1, gridcolor='#333')
                     fig_60.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333')
                     fig_60.update_layout(height=580, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
@@ -113,7 +121,7 @@ def render():
                     """, unsafe_allow_html=True)
                 
                 with st.container(border=True):
-                    st.markdown("<div class='section-title'>未來 10 期扣抵雷達</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='section-title'>未來 10 期均線預判</div>", unsafe_allow_html=True)
                     deduct_text = "⚖️ 均線走平震盪"
                     deduct_color = "#FFA500"
                     if latest_60m_close > avg_deduct:
@@ -124,10 +132,15 @@ def render():
                         deduct_color = "#00FF00"
                         
                     st.markdown(f"""
-                    <h4 style='color: {deduct_color}; margin-top: 0;'>{deduct_text}</h4>
-                    <div style='font-size: 0.85em; color: gray;'>
-                        目前收盤價：{latest_60m_close:.2f}<br>
-                        未來 10 期將剔除之均價：{avg_deduct:.2f}
+                    <div class='deduct-box' style='border-color: {deduct_color};'>
+                        <h4 style='color: {deduct_color}; margin-top: 0;'>{deduct_text}</h4>
+                        <div style='font-size: 0.85em; color: gray;'>
+                            目前收盤價：{latest_60m_close:.2f}<br>
+                            未來將剔除之舊均價：{avg_deduct:.2f}
+                        </div>
+                        <div style='margin-top: 10px; font-size: 0.85em;'>
+                            <b>圖表說明：</b>橘色虛線為假設股價維持現價不跌，未來 10 小時真實的 60MA 走向軌跡。
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -162,7 +175,7 @@ def render():
                         """, unsafe_allow_html=True)
                     else:
                         action_text = "未達極端轉折。在車上請續抱；空手請等待。"
-                        if latest_60m_close > ma60_60m and latest_60m_close > avg_deduct: action_text += "<br><span style='color:#FF4B4B;'>(註：目前 60MA 持續向上助漲中)</span>"
+                        if latest_60m_close > ma60_60m and latest_60m_close > avg_deduct: action_text += "<br><span style='color:#FF4B4B;'>(目前 60MA 持續向上助漲中)</span>"
                         st.markdown(f"""
                         <div class='signal-wait' style='margin-top:0; padding:10px;'>
                             <div style='font-size:1.1em; font-weight:bold; color:#FFA500;'>⏳ 觀望中</div>
