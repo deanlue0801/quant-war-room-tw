@@ -89,22 +89,16 @@ def render():
             osc_val = float(df_60['OSC'].values[-1])
             osc_prev = float(df_60['OSC'].values[-2])
             
-            # 4. 未來 10 期真實 60MA 預測演算 (假設股價維持現價平盤)
-            future_ma60 = []
-            current_sum = float(closes[-60:].sum())
-            for i in range(10):
-                dropped_price = float(closes[-60 + i])
-                current_sum = current_sum - dropped_price + latest_60m_close
-                future_ma60.append(current_sum / 60)
-                
+            # 4. 扣抵防守線量化計算
             deduct_prices = closes[-60:-50]
             avg_deduct = float(deduct_prices.mean())
+            next_deduct_price = float(closes[-60]) # 下一個小時將剔除的舊價格
             
             # --- 畫面頂部資訊 ---
             last_date = df_60.index[-1]
-            date_str = f"{last_date.strftime('%m/%d %H:%M')}"
+            date_str = f"{last_date.strftime('%m/%d %H:%M')} (即時)"
             st.markdown(f"<h3 style='margin-bottom:0;'>{display_title_60} &nbsp;&nbsp; <span style='font-size: 0.5em; color: #8ab4f8; border: 1px solid #333; padding: 2px 8px; border-radius: 5px; vertical-align: middle;'>{date_str}</span></h3>", unsafe_allow_html=True)
-            st.markdown(f"<div class='text-sm' style='margin-bottom: 15px;'>收盤 <span style='color:{color}; font-weight:bold;'>{latest_60m_close:.2f}</span> &nbsp;&nbsp; 漲跌 <span style='color:{color};'>{sign} {abs(price_change):.2f} ({change_pct:.2f}%)</span> &nbsp;&nbsp; | &nbsp;&nbsp; 當根K線成交量 <b>{latest_vol:,.0f}</b> 張</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='text-sm' style='margin-bottom: 15px;'>收盤 <span style='color:{color}; font-weight:bold;'>{latest_60m_close:.2f}</span> &nbsp;&nbsp; 漲跌 <span style='color:{color};'>{sign} {abs(price_change):.2f} ({change_pct:.2f}%)</span> &nbsp;&nbsp; | &nbsp;&nbsp; 當前K線量能 <b>{latest_vol:,.0f}</b> 張</div>", unsafe_allow_html=True)
             st.markdown("<hr style='margin: 0 0 10px 0; padding: 0;'>", unsafe_allow_html=True)
 
             # --- 黃金排版：左圖右表 ---
@@ -116,21 +110,17 @@ def render():
                     
                     x_dates = df_60.index.strftime('%m-%d %H:%M').tolist()
                     
-                    # 變更為 4 列的子圖表，加入成交量空間
+                    # 4 列子圖表
                     fig_60 = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.2, 0.2, 0.2])
                     
                     # Row 1: K線與 60MA
                     fig_60.add_trace(go.Candlestick(x=x_dates, open=df_60['Open'], high=df_60['High'], low=df_60['Low'], close=df_60['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MA60'], line=dict(color='orange', width=2), name="60MA"), row=1, col=1)
                     
-                    # 預測的 MA 完美接續在原本的 60MA 之後
+                    # 未來 10 期扣抵舊價格 (白色虛線)
                     future_dates = pd.date_range(df_60.index[-1] + pd.Timedelta(hours=1), periods=10, freq='60min')
                     future_dates_str = future_dates.strftime('%m-%d %H:%M').tolist()
-                    
-                    ma_proj_x = [x_dates[-1]] + future_dates_str
-                    ma_proj_y = [ma60_60m] + future_ma60
-                    
-                    fig_60.add_trace(go.Scatter(x=ma_proj_x, y=ma_proj_y, mode='lines', line=dict(color='orange', dash='dash', width=2), name="預測60MA(平盤)"), row=1, col=1)
+                    fig_60.add_trace(go.Scatter(x=future_dates_str, y=deduct_prices, mode='lines+markers', line=dict(color='white', dash='dash', width=1.5), name="未來10期舊價格"), row=1, col=1)
                     
                     # Row 2: 成交量
                     colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df_60.iterrows()]
@@ -183,26 +173,21 @@ def render():
                     """, unsafe_allow_html=True)
                 
                 with st.container(border=True):
-                    st.markdown("<div class='section-title'>未來 10 期均線預判</div>", unsafe_allow_html=True)
-                    deduct_text = "⚖️ 均線走平震盪"
-                    deduct_color = "#FFA500"
-                    if latest_60m_close > avg_deduct:
-                        deduct_text = "📈 扣抵低檔，60MA 強力上彎！"
-                        deduct_color = "#FF4B4B"
-                    elif latest_60m_close < avg_deduct:
-                        deduct_text = "📉 扣抵高檔，60MA 下彎反壓！"
-                        deduct_color = "#00FF00"
-                        
+                    # 安全距離計算
+                    dist_pct = ((latest_60m_close - avg_deduct) / avg_deduct) * 100 if avg_deduct != 0 else 0
+                    dist_sign = "+" if dist_pct >= 0 else ""
+                    dist_color = "#FF4B4B" if dist_pct >= 0 else "#00FF00"
+                    
                     st.markdown(f"""
-                    <div class='deduct-box' style='border-color: {deduct_color};'>
-                        <h4 style='color: {deduct_color}; margin-top: 0;'>{deduct_text}</h4>
-                        <div style='font-size: 0.85em; color: gray;'>
-                            目前收盤價：{latest_60m_close:.2f}<br>
-                            未來將剔除之舊均價：{avg_deduct:.2f}
-                        </div>
-                        <div style='margin-top: 10px; font-size: 0.85em;'>
-                            <b>圖表說明：</b>橘色虛線為假設股價維持現價不跌，未來 10 小時真實的 60MA 走向軌跡。
-                        </div>
+                    <div class='deduct-box' style='border-color: {dist_color}; padding: 15px; border-radius: 8px; border-width: 1px; border-style: solid; background: rgba(255,255,255,0.02);'>
+                        <h4 style='color: {dist_color}; margin-top: 0; margin-bottom: 15px;'>🛡️ 均線轉折防守關鍵</h4>
+                        <ul style='font-size: 0.9em; padding-left: 20px; line-height: 1.8; color: #ccc;'>
+                            <li><b>下小時均線上揚門檻：</b> <span style='color:white; font-size: 1.1em;'>{next_deduct_price:.2f}</span><br>
+                            <span style='color:gray; font-size:0.85em;'>(下一小時收盤大於此價，60MA 必上揚)</span></li>
+                            <li style='margin-top: 5px;'><b>波段 10 小時防禦線：</b> <span style='color:white; font-size: 1.1em;'>{avg_deduct:.2f}</span><br>
+                            <span style='color:gray; font-size:0.85em;'>(中短期多空力道分水嶺)</span></li>
+                            <li style='margin-top: 5px;'><b>目前股價安全距離：</b> <span style='color:{dist_color}; font-weight:bold; font-size: 1.2em;'>{dist_sign}{dist_pct:.2f}%</span></li>
+                        </ul>
                     </div>
                     """, unsafe_allow_html=True)
 
