@@ -32,26 +32,24 @@ def render():
             # 1. 計算 60MA
             df_60['MA60'] = df_60['Close'].rolling(window=60).mean()
             
-            # 2. 計算 KD(60,3,3)
+# 2. 計算精準券商版 KD(60,3,3)
             low_min_60 = df_60['Low'].rolling(window=60).min()
             high_max_60 = df_60['High'].rolling(window=60).max()
             df_60['RSV_60'] = 100 * ((df_60['Close'] - low_min_60) / (high_max_60 - low_min_60))
-            df_60['K_60'] = df_60['RSV_60'].ewm(com=2, adjust=False).mean()
-            df_60['D_60'] = df_60['K_60'].ewm(com=2, adjust=False).mean()
+            df_60['RSV_60'] = df_60['RSV_60'].fillna(50) # 防呆：若無資料預設50
             
-            latest_60m_close = df_60['Close'].iloc[-1]
-            prev_close = df_60['Close'].iloc[-2]
-            price_change = latest_60m_close - prev_close
-            change_pct = (price_change / prev_close) * 100
-            color = "#FF4B4B" if price_change >= 0 else "#00FF00"
-            sign = "▲" if price_change >= 0 else "▼"
-            latest_vol = df_60['Volume'].iloc[-1]
-            
-            ma60_60m = df_60['MA60'].iloc[-1]
-            k_60m = df_60['K_60'].iloc[-1]
-            d_60m = df_60['D_60'].iloc[-1]
-            k_60m_prev = df_60['K_60'].iloc[-2]
-            d_60m_prev = df_60['D_60'].iloc[-2]
+            # 使用迴圈強制給定初始值 50 (與台灣看盤軟體完全一致的演算法)
+            k_list, d_list = [], []
+            for i, rsv in enumerate(df_60['RSV_60']):
+                if i == 0 or pd.isna(rsv):
+                    k_list.append(50.0)
+                    d_list.append(50.0)
+                else:
+                    k_list.append((2/3) * k_list[-1] + (1/3) * rsv)
+                    d_list.append((2/3) * d_list[-1] + (1/3) * k_list[-1])
+                    
+            df_60['K_60'] = k_list
+            df_60['D_60'] = d_list
             
             # 3. 未來 10 期真實 60MA 預測演算 (假設股價維持現價平盤)
             future_ma60 = []
