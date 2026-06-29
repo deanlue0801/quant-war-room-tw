@@ -16,7 +16,7 @@ def render():
         with col_666_2:
             submit_666 = st.form_submit_button("🔥 啟動 666 戰法", use_container_width=True)
         with col_666_3:
-            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 專注 60分K線，有效過濾雜訊、精準捕捉波段轉折點</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 專注 60分K線，結合 60MA、KD 與 MACD 精準捕捉波段轉折點</div>", unsafe_allow_html=True)
         
     if submit_666 and ticker_60:
         raw_ticker_60 = name_to_id_dict.get(ticker_60.strip(), ticker_60.strip()) if ticker_60.strip() not in stock_dict else ticker_60.strip()
@@ -62,6 +62,13 @@ def render():
                     d_list.append((2/3) * d_list[-1] + (1/3) * k_list[-1])
             df_60['K_60'] = k_list
             df_60['D_60'] = d_list
+
+            # 3. 計算 MACD (12, 26, 9)
+            exp1 = df_60['Close'].ewm(span=12, adjust=False).mean()
+            exp2 = df_60['Close'].ewm(span=26, adjust=False).mean()
+            df_60['MACD'] = exp1 - exp2
+            df_60['Signal'] = df_60['MACD'].ewm(span=9, adjust=False).mean()
+            df_60['OSC'] = df_60['MACD'] - df_60['Signal']
             
             # 取出純數值，確保純數學運算安全
             closes = df_60['Close'].values
@@ -78,8 +85,11 @@ def render():
             d_60m = float(df_60['D_60'].values[-1])
             k_60m_prev = float(df_60['K_60'].values[-2])
             d_60m_prev = float(df_60['D_60'].values[-2])
+
+            osc_val = float(df_60['OSC'].values[-1])
+            osc_prev = float(df_60['OSC'].values[-2])
             
-            # 3. 未來 10 期真實 60MA 預測演算 (假設股價維持現價平盤)
+            # 4. 未來 10 期真實 60MA 預測演算 (假設股價維持現價平盤)
             future_ma60 = []
             current_sum = float(closes[-60:].sum())
             for i in range(10):
@@ -102,12 +112,14 @@ def render():
             
             with col_left:
                 with st.container(border=True):
-                    st.markdown('<div class="section-title">60分K線與均線預測可視化</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="section-title">60分K線與動能指標可視化</div>', unsafe_allow_html=True)
                     
                     x_dates = df_60.index.strftime('%m-%d %H:%M').tolist()
                     
-                    fig_60 = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_heights=[0.7, 0.3])
+                    # 變更為 3 列的子圖表，加入 MACD 空間
+                    fig_60 = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.25, 0.25])
                     
+                    # Row 1: K線與 60MA
                     fig_60.add_trace(go.Candlestick(x=x_dates, open=df_60['Open'], high=df_60['High'], low=df_60['Low'], close=df_60['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MA60'], line=dict(color='orange', width=2), name="60MA"), row=1, col=1)
                     
@@ -120,31 +132,50 @@ def render():
                     
                     fig_60.add_trace(go.Scatter(x=ma_proj_x, y=ma_proj_y, mode='lines', line=dict(color='orange', dash='dash', width=2), name="預測60MA(平盤)"), row=1, col=1)
                     
+                    # Row 2: KD(60,3,3)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['K_60'], line=dict(color='yellow', width=1.5), name='K(60)'), row=2, col=1)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['D_60'], line=dict(color='cyan', width=1.5), name='D(60)'), row=2, col=1)
                     fig_60.add_hline(y=80, line_dash="dot", line_color="red", row=2, col=1)
                     fig_60.add_hline(y=20, line_dash="dot", line_color="green", row=2, col=1)
+
+                    # Row 3: MACD
+                    colors_macd = ['#FF4B4B' if val >= 0 else '#00FF00' for val in df_60['OSC']]
+                    fig_60.add_trace(go.Bar(x=x_dates, y=df_60['OSC'], marker_color=colors_macd, name="MACD柱"), row=3, col=1)
+                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MACD'], line=dict(color='white', width=1.5), name='MACD'), row=3, col=1)
+                    fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['Signal'], line=dict(color='yellow', width=1.5), name='Signal'), row=3, col=1)
                     
                     fig_60.update_xaxes(type='category', nticks=12, showgrid=True, gridwidth=1, gridcolor='#333')
                     fig_60.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#333')
-                    fig_60.update_layout(height=580, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
+                    fig_60.update_layout(height=750, margin=dict(l=0, r=0, t=5, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
                     st.plotly_chart(fig_60, use_container_width=True)
 
             with col_right:
                 with st.container(border=True):
                     st.markdown("<div class='section-title'>趨勢與動能分析</div>", unsafe_allow_html=True)
+                    
+                    # 60MA 狀態
                     trend_status = "✅ 多頭 (站上 60MA)" if latest_60m_close > ma60_60m else "🚨 空頭 (跌破 60MA)"
                     trend_color = "#FF4B4B" if latest_60m_close > ma60_60m else "#00FF00"
                     
+                    # KD 狀態
                     kd_666_status = "⚖️ 中性整理"
                     kd_color = "gray"
                     if k_60m > d_60m and k_60m_prev <= d_60m_prev: kd_666_status, kd_color = "🔥 黃金交叉", "#FF4B4B"
                     elif k_60m < d_60m and k_60m_prev >= d_60m_prev: kd_666_status, kd_color = "🔪 死亡交叉", "#00FF00"
+
+                    # MACD 狀態
+                    macd_status = "⚖️ 盤整"
+                    macd_color = "gray"
+                    if osc_val > 0 and osc_val > osc_prev: macd_status, macd_color = "🔥 多頭增溫", "#FF4B4B"
+                    elif osc_val > 0 and osc_val <= osc_prev: macd_status, macd_color = "⚠️ 多頭收斂", "gray"
+                    elif osc_val < 0 and osc_val < osc_prev: macd_status, macd_color = "🔪 空頭擴散", "#00FF00"
+                    elif osc_val < 0 and osc_val >= osc_prev: macd_status, macd_color = "🟢 空頭收斂", "#FF4B4B"
                     
                     st.markdown(f"""
                     <div style='margin-bottom: 8px;'><b>📍 60MA 狀態：</b> <span style='color:{trend_color}; font-weight:bold;'>{trend_status}</span></div>
-                    <div><b>📍 KD(60) 狀態：</b> <span style='color:{kd_color}; font-weight:bold;'>{kd_666_status}</span><br>
+                    <div style='margin-bottom: 8px;'><b>📍 KD(60) 狀態：</b> <span style='color:{kd_color}; font-weight:bold;'>{kd_666_status}</span><br>
                     <span style='font-size: 0.85em; color:gray;'>(K={k_60m:.1f}, D={d_60m:.1f})</span></div>
+                    <div><b>📍 MACD 狀態：</b> <span style='color:{macd_color}; font-weight:bold;'>{macd_status}</span></div>
                     """, unsafe_allow_html=True)
                 
                 with st.container(border=True):
