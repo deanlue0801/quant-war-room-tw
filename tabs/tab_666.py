@@ -117,12 +117,6 @@ def render():
                     fig_60.add_trace(go.Candlestick(x=x_dates, open=df_60['Open'], high=df_60['High'], low=df_60['Low'], close=df_60['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                     fig_60.add_trace(go.Scatter(x=x_dates, y=df_60['MA60'], line=dict(color='orange', width=2), name="60MA"), row=1, col=1)
                     
-                    # 未來 10 期扣抵舊價格 (白色虛線)
-                    future_dates = pd.date_range(df_60.index[-1] + pd.Timedelta(hours=1), periods=10, freq='60min')
-                    future_dates_str = future_dates.strftime('%m-%d %H:%M').tolist()
-                    ma_proj_x = [x_dates[-1]] + future_dates_str
-                    ma_proj_y = [ma60_60m] + future_ma60
-                    
                     # Row 2: 成交量
                     colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df_60.iterrows()]
                     fig_60.add_trace(go.Bar(x=x_dates, y=df_60['Volume'], marker_color=colors_vol, name="成交量"), row=2, col=1)
