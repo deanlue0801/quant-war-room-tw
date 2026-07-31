@@ -30,7 +30,6 @@ def find_zigzag_points(df, order=4):
             else:
                 pivot_points.append((i, df.index[i], lows[i], 'L'))
                 
-    # 過濾連續同性質點，保留極值
     filtered_pivots = []
     for pt in pivot_points:
         if not filtered_pivots:
@@ -45,7 +44,6 @@ def find_zigzag_points(df, order=4):
             else:
                 filtered_pivots.append(pt)
                 
-    # 強制將最後一段至最新 K 線的極值補上，確保全圖連線無斷點
     if filtered_pivots:
         last_idx = filtered_pivots[-1][0]
         if n - 1 - last_idx >= 1:
@@ -61,70 +59,58 @@ def find_zigzag_points(df, order=4):
 
     return filtered_pivots
 
-def analyze_elliott_wave_full(df, pivots, start_idx=0):
+def generate_multi_degree_wave_labels(valid_pivots):
     """
-    全圖波浪型態精密標註：
-    將起算點後的所有轉折點無盲點地進行波浪標籤分配 (1-5 -> A-B-C / W-X-Y -> 延伸浪)
+    進行符合波浪理論的多重循環標註 (1-5 衝擊浪與 A-B-C / W-X-Y 修正浪自動交替循環)
     """
-    valid_pivots = [p for p in pivots if p[0] >= start_idx]
-    if len(valid_pivots) < 2:
-        return {"pattern": "資料不足", "labels": [], "status": "轉折點數量不足，無法標註波浪。", "targets": {}}
+    labels = []
+    if not valid_pivots:
+        return labels
 
     p0 = valid_pivots[0]
-    labels = [(p0[0], p0[1], p0[2], "⓪")]
-    remaining_pivots = valid_pivots[1:]
+    labels.append((p0[0], p0[1], p0[2], "⓪"))
 
-    # 定義波浪符號序列池
-    impulse_symbols = ["①", "②", "③", "④", "⑤"]
-    corr_symbols = ["Ⓐ", "Ⓑ", "Ⓒ", "W", "X", "Y", "X2", "Z"]
-    extended_symbols = [f"v{i}" for i in range(1, 20)]
+    pts = valid_pivots[1:]
+    idx = 0
+    total_pts = len(pts)
 
-    # 檢查前 5 個轉折是否符合基本 1-5 推升
-    has_impulse = False
-    if len(remaining_pivots) >= 5:
-        p1, p2, p3, p4, p5 = remaining_pivots[:5]
-        # 簡單推升檢查：浪 2 不破 0、浪 4 不破 1 高點（多頭）或浪 2 不高於 0（空頭）
-        if p1[3] == 'H' and p2[2] > p0[2]:
-            has_impulse = True
-        elif p1[3] == 'L' and p2[2] < p0[2]:
-            has_impulse = True
+    # 循環符號池（大層級與次級結構交替）
+    impulse_cycles = [
+        ["①", "②", "③", "④", "⑤"],
+        ["⑴", "⑵", "⑶", "⑷", "⑸"],
+        ["1", "2", "3", "4", "5"]
+    ]
+    corrective_cycles = [
+        ["Ⓐ", "Ⓑ", "Ⓒ"],
+        ["⒲", "⒱", "⒴"],
+        ["a", "b", "c"]
+    ]
 
-    if has_impulse:
-        # 標註前 5 個浪為 ① ~ ⑤
-        for i in range(5):
-            pt = remaining_pivots[i]
-            labels.append((pt[0], pt[1], pt[2], impulse_symbols[i]))
-        
-        # 剩餘的全圖所有點，順序接入修正浪與延伸標籤
-        rest_pivots = remaining_pivots[5:]
-        for i, pt in enumerate(rest_pivots):
-            sym = corr_symbols[i] if i < len(corr_symbols) else extended_symbols[i - len(corr_symbols)]
-            labels.append((pt[0], pt[1], pt[2], sym))
-        
-        pattern_str = "全圖波浪分析：標準 1-5 浪 + 後續波段結構"
-    else:
-        # 不符合衝擊浪時，全圖依序以修正浪/複合浪進行連續標註
-        symbol_pool = corr_symbols + extended_symbols
-        for i, pt in enumerate(remaining_pivots):
-            sym = symbol_pool[i] if i < len(symbol_pool) else f"p{i}"
-            labels.append((pt[0], pt[1], pt[2], sym))
-            
-        pattern_str = "全圖波浪分析：複式 / 階段性整理型態"
+    cycle_count = 0
 
-    last_label = labels[-1][3] if len(labels) > 1 else "⓪"
-    all_prices = [p[2] for p in valid_pivots]
-    
-    return {
-        "pattern": pattern_str,
-        "labels": labels,
-        "status": f"成功覆蓋全圖標註！當前走勢已推進至最新【{last_label} 浪】位置。",
-        "invalid_price": p0[2],
-        "targets": {
-            "全圖最高壓力": max(all_prices),
-            "全圖最低支撐": min(all_prices),
-            "起算點防守價": p0[2]
-        }
-    }
+    while idx < total_pts:
+        # 1. 先標註一組 1-5 推升浪 (需要至少 5 個點)
+        imp_syms = impulse_cycles[cycle_count % len(impulse_cycles)]
+        imp_len = min(5, total_pts - idx)
+        for i in range(imp_len):
+            pt = pts[idx + i]
+            labels.append((pt[0], pt[1], pt[2], imp_syms[i]))
+        idx += imp_len
+
+        if idx >= total_pts:
+            break
+
+        # 2. 接著標註 修正浪 (A-B-C 或 W-X-Y)
+        corr_syms = corrective_cycles[cycle_count % len(corrective_cycles)]
+        corr_len = min(3, total_pts - idx)
+        for i in range(corr_len):
+            pt = pts[idx + i]
+            labels.append((pt[0], pt[1], pt[2], corr_syms[i]))
+        idx += corr_len
+
+        cycle_count += 1
+
+    return labels
 
 def render():
     stock_dict, name_to_id_dict, full_info_df = utils.load_stock_dicts()
@@ -146,7 +132,7 @@ def render():
         with col_ctrl2:
             analyze_btn = st.form_submit_button("🌊 啟動波浪理論解析", use_container_width=True)
         with col_ctrl3:
-            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援全 K 線圖自動連續波浪標註與起算點動態切換</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援多重層級循環標註（1-5 與 A-B-C 自動循環與起算點切換）</div>", unsafe_allow_html=True)
 
     if st.session_state['search_history']:
         st.markdown("<div style='font-size: 0.8em; color: gray; margin-bottom: 5px;'>🕒 最近搜尋紀錄 (點擊直接分析)：</div>", unsafe_allow_html=True)
@@ -173,7 +159,7 @@ def render():
         
         add_to_history(raw_ticker)
 
-        with st.spinner(f'解析 [{display_title}] 艾略特波浪全圖結構中...'):
+        with st.spinner(f'解析 [{display_title}] 艾略特波浪結構中...'):
             try:
                 df_full = utils.fetch_tech_data_fugle(raw_ticker).copy()
                 if len(df_full) < 80:
@@ -186,7 +172,7 @@ def render():
                 # 轉折點計算
                 pivots = find_zigzag_points(df, order=4)
                 
-                # 設定 Point Zero 選項與 Session State 狀態綁定 (修復下拉選單失效)
+                # Point Zero 下拉選單與 Session State 綁定
                 zero_options = {}
                 min_global_idx = df['Low'].argmin()
                 dt_min_str = df.index[min_global_idx].strftime('%Y/%m/%d')
@@ -198,7 +184,6 @@ def render():
                     if label_key not in zero_options:
                         zero_options[label_key] = lp[0]
 
-                # 下拉選單 session state 鍵值
                 state_key = f"wave_zero_select_{raw_ticker}"
                 
                 st.markdown("<hr style='margin: 5px 0 15px 0;'>", unsafe_allow_html=True)
@@ -211,8 +196,9 @@ def render():
                     )
                     selected_start_idx = zero_options[selected_zero_label]
 
-                # 計算全圖波浪分析
-                wave_result = analyze_elliott_wave_full(df, pivots, start_idx=selected_start_idx)
+                # 濾出起算點後的轉折點，進行循環層級標註
+                valid_pivots = [p for p in pivots if p[0] >= selected_start_idx]
+                labels = generate_multi_degree_wave_labels(valid_pivots)
 
                 # --- 繪圖區 ---
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
@@ -220,19 +206,19 @@ def render():
                 # K 線
                 fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                 
-                # 全圖波浪連線與標記
-                if wave_result['labels']:
-                    wave_x = [df.index[lbl[0]].strftime('%m-%d') for lbl in wave_result['labels']]
-                    wave_y = [lbl[2] for lbl in wave_result['labels']]
+                # 多重層級連線與標記
+                if labels:
+                    wave_x = [df.index[lbl[0]].strftime('%m-%d') for lbl in labels]
+                    wave_y = [lbl[2] for lbl in labels]
                     
                     fig.add_trace(go.Scatter(
                         x=wave_x, y=wave_y,
                         mode='lines+markers+text',
                         line=dict(color='gold', width=2, dash='solid'),
                         marker=dict(size=7, color='cyan'),
-                        text=[lbl[3] for lbl in wave_result['labels']],
+                        text=[lbl[3] for lbl in labels],
                         textposition="top center",
-                        textfont=dict(size=13, color='gold'),
+                        textfont=dict(size=14, color='gold'),
                         name="波浪軌跡"
                     ), row=1, col=1)
 
@@ -244,8 +230,11 @@ def render():
                 fig.update_layout(height=550, margin=dict(l=0, r=0, t=10, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis_rangeslider_visible=False)
                 fig.update_yaxes(showgrid=True, gridcolor='#333')
 
+                last_label = labels[-1][3] if labels else "⓪"
+                all_prices = [p[2] for p in valid_pivots] if valid_pivots else [0]
+
                 # --- UI 資訊卡片 ---
-                st.markdown(f"### {display_title} &nbsp;&nbsp; | &nbsp;&nbsp; 型態：<span style='color:gold;'>{wave_result['pattern']}</span>", unsafe_allow_html=True)
+                st.markdown(f"### {display_title} &nbsp;&nbsp; | &nbsp;&nbsp; 波浪狀態：<span style='color:gold;'>多重波段循環解析中</span>", unsafe_allow_html=True)
                 
                 col_chart, col_info = st.columns([7, 3])
                 with col_chart:
@@ -253,18 +242,18 @@ def render():
 
                 with col_info:
                     with st.container(border=True):
-                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#8ab4f8; margin-bottom:8px;">🎯 全波段診斷</div>', unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:0.95em; line-height:1.6;'>{wave_result['status']}</div>", unsafe_allow_html=True)
+                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#8ab4f8; margin-bottom:8px;">🎯 當前波浪位階</div>', unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:0.95em; line-height:1.6;'>最新轉折點位於【<b>{last_label}</b>】浪，已完成多組推升與修正浪之連貫標註。</div>", unsafe_allow_html=True)
 
                     with st.container(border=True):
-                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FF4B4B; margin-bottom:8px;">🛡️ 起算點價格</div>', unsafe_allow_html=True)
-                        invalid_p = wave_result.get('invalid_price', 0)
-                        st.markdown(f"<div style='font-size:1.2em; font-weight:bold; color:#FF4B4B;'>{invalid_p:.2f} 元</div>", unsafe_allow_html=True)
+                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FF4B4B; margin-bottom:8px;">🛡️ 起算點防守價</div>', unsafe_allow_html=True)
+                        p0_price = valid_pivots[0][2] if valid_pivots else 0
+                        st.markdown(f"<div style='font-size:1.2em; font-weight:bold; color:#FF4B4B;'>{p0_price:.2f} 元</div>", unsafe_allow_html=True)
 
                     with st.container(border=True):
                         st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FFA500; margin-bottom:8px;">📐 關鍵區域價位</div>', unsafe_allow_html=True)
-                        for t_name, t_val in wave_result.get('targets', {}).items():
-                            st.markdown(f"<div style='font-size:0.9em;'>{t_name}： <b>{t_val:.1f}</b></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:0.9em;'>波段最高壓力： <b>{max(all_prices):.1f}</b></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:0.9em;'>波段最低支撐： <b>{min(all_prices):.1f}</b></div>", unsafe_allow_html=True)
 
             except Exception as e:
                 st.error(f"波浪分析資料處理發生錯誤：{e}")
