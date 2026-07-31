@@ -59,9 +59,112 @@ def find_zigzag_points(df, order=4):
 
     return filtered_pivots
 
+def _check_impulse_rules(p0, p1, p2, p3, p4, p5, direction):
+    """
+    檢查 1-2-3-4-5 是否符合艾略特波浪的三條硬性規則，direction='up' 或 'down'。
+    同時檢查轉折點的高低屬性是否符合推升浪應有的交替型態 (H-L-H-L-H 或 L-H-L-H-L)。
+    """
+    if direction == 'up':
+        if not (p1[3] == 'H' and p2[3] == 'L' and p3[3] == 'H' and p4[3] == 'L' and p5[3] == 'H'):
+            return False, {}
+        rule_w2_hold = p2[2] > p0[2]          # 浪 2 不得跌破浪 0 起點
+        rule_w4_no_overlap = p4[2] > p1[2]    # 浪 4 低點不得跌破浪 1 高點 (不重疊)
+        w1_len, w3_len, w5_len = p1[2]-p0[2], p3[2]-p2[2], p5[2]-p4[2]
+        rule_w3_not_shortest = not (w3_len < w1_len and w3_len < w5_len)  # 浪 3 不可為最短
+        rule_w1_not_longest = not (w1_len > w3_len and w1_len > w5_len)  # 建議性規則：浪 1 通常非最長
+    else:
+        if not (p1[3] == 'L' and p2[3] == 'H' and p3[3] == 'L' and p4[3] == 'H' and p5[3] == 'L'):
+            return False, {}
+        rule_w2_hold = p2[2] < p0[2]
+        rule_w4_no_overlap = p4[2] < p1[2]
+        w1_len, w3_len, w5_len = p0[2]-p1[2], p2[2]-p3[2], p4[2]-p5[2]
+        rule_w3_not_shortest = not (w3_len < w1_len and w3_len < w5_len)
+        rule_w1_not_longest = not (w1_len > w3_len and w1_len > w5_len)
+
+    is_valid = rule_w2_hold and rule_w4_no_overlap and rule_w3_not_shortest
+    detail = {
+        "w1": w1_len, "w3": w3_len, "w5": w5_len,
+        "guideline_w1_not_longest": rule_w1_not_longest
+    }
+    return is_valid, detail
+
+
+def _is_triangle(points):
+    """檢查一組轉折點的高點是否遞減、低點是否遞增 (收斂三角)"""
+    highs = [p[2] for p in points if p[3] == 'H']
+    lows = [p[2] for p in points if p[3] == 'L']
+    if len(highs) < 2 or len(lows) < 2:
+        return False
+    highs_desc = all(highs[i] > highs[i+1] for i in range(len(highs)-1))
+    lows_asc = all(lows[i] < lows[i+1] for i in range(len(lows)-1))
+    return highs_desc and lows_asc
+
+
+def _classify_correction(p0, pts):
+    """
+    針對 0 浪之後的一串轉折點，判斷屬於 Zigzag(A-B-C)、Flat(平台)、
+    Triangle(A-B-C-D-E) 還是 W-X-Y 複式修正，回傳 (pattern_str, extra_labels, targets)。
+    pts 須為 valid_pivots[1:] 或推升浪五浪之後剩餘的點。
+    """
+    n = len(pts)
+    if n == 0:
+        return "尚無修正轉折點", [], {}
+
+    if n == 1:
+        pa = pts[0]
+        return "A 浪修正進行中（等待 B、C 浪成形）", [(pa[0], pa[1], pa[2], "Ⓐ")], {}
+
+    pa, pb = pts[0], pts[1]
+    a_len = abs(pa[2] - p0[2])
+    b_retrace_ratio = (abs(pb[2] - pa[2]) / a_len) if a_len > 0 else 0
+
+    if n == 2:
+        return (
+            "A-B 修正進行中（等待 C 浪确认）",
+            [(pa[0], pa[1], pa[2], "Ⓐ"), (pb[0], pb[1], pb[2], "Ⓑ")],
+            {}
+        )
+
+    # n >= 3：優先檢查是否為三角收斂 (最多取前 5 點 A-B-C-D-E)
+    tri_candidates = pts[:5]
+    if n >= 4 and _is_triangle(tri_candidates):
+        tri_labels_txt = ["Ⓐ", "Ⓑ", "Ⓒ", "Ⓓ", "Ⓔ"]
+        extra = [(pt[0], pt[1], pt[2], tri_labels_txt[i]) for i, pt in enumerate(tri_candidates)]
+        highs = [p[2] for p in tri_candidates if p[3] == 'H']
+        lows = [p[2] for p in tri_candidates if p[3] == 'L']
+        targets = {"三角收斂上緣": max(highs), "三角收斂下緣": min(lows)}
+        return "三角收斂修正 (Triangle A-B-C-D-E)", extra, targets
+
+    pc = pts[2]
+    a_is_down = pa[3] == 'L'  # A 浪方向：True 表示從 p0 向下修正 (原趨勢向上)
+    c_beyond_a = (pc[2] < pa[2]) if a_is_down else (pc[2] > pa[2])
+
+    if n == 3:
+        if 0.9 <= b_retrace_ratio <= 1.10 and not c_beyond_a:
+            pattern_str = "Flat 平台型修正 (A-B-C，B浪深度回撤)"
+        elif b_retrace_ratio < 0.9 and c_beyond_a:
+            pattern_str = "標準 Zigzag 修正浪 (A-B-C)"
+        elif b_retrace_ratio > 1.0 and not c_beyond_a:
+            pattern_str = "Expanded 擴張型修正 (A-B-C，B浪超越起點)"
+        else:
+            pattern_str = "A-B-C 修正浪"
+        extra = [(pa[0], pa[1], pa[2], "Ⓐ"), (pb[0], pb[1], pb[2], "Ⓑ"), (pc[0], pc[1], pc[2], "Ⓒ")]
+        targets = {"修正波段高點": max(pa[2], pb[2], pc[2]), "修正波段低點": min(pa[2], pb[2], pc[2])}
+        return pattern_str, extra, targets
+
+    # n >= 4 且非三角 -> W-X-Y (或更多重) 複式修正
+    wxy_labels_txt = ["W", "X", "Y", "X2", "Z"]
+    extra = [(pt[0], pt[1], pt[2], wxy_labels_txt[i] if i < len(wxy_labels_txt) else f"V{i}") for i, pt in enumerate(pts)]
+    targets = {"箱型頂部壓力": max(p[2] for p in pts), "箱型底部支撐": min(p[2] for p in pts)}
+    return "W-X-Y 複式修正型態", extra, targets
+
+
 def analyze_elliott_wave(df, pivots, start_idx=0):
     """
-    艾略特波浪型態精密辨識：區分 1-5 推升浪、A-B-C 標準修正與 W-X-Y 複式修正
+    艾略特波浪型態辨識：
+    - 同時檢查「向上啟動」與「向下啟動」兩種 1-5 衝擊浪 (符合三條硬性規則才成立)
+    - 五浪成立後，接續辨識後續修正型態 (Zigzag / Flat / Triangle / W-X-Y)
+    - 若不構成衝擊浪，則將全部轉折點視為修正結構分析
     """
     valid_pivots = [p for p in pivots if p[0] >= start_idx]
     if len(valid_pivots) < 3:
@@ -69,83 +172,66 @@ def analyze_elliott_wave(df, pivots, start_idx=0):
 
     p0 = valid_pivots[0]
     labels = [(p0[0], p0[1], p0[2], "⓪")]
-    
-    # 判斷趨勢方向（第一波是向上還是向下）
-    is_upward_start = valid_pivots[1][3] == 'H' if len(valid_pivots) > 1 else True
 
-    # --- 情境 A：起算點後為多頭推升（向上起步） ---
-    if is_upward_start and len(valid_pivots) >= 6:
+    is_upward_start = valid_pivots[1][3] == 'H'
+    direction = 'up' if is_upward_start else 'down'
+
+    # --- 情境 A：檢查是否構成 1-5 衝擊浪 (上漲或下跌方向皆檢查) ---
+    if len(valid_pivots) >= 6:
         p1, p2, p3, p4, p5 = valid_pivots[1:6]
-        
-        # 1-5 浪硬性規則校驗
-        rule_no_overlap = p4[2] > p1[2] # 浪 4 底不破浪 1 頂
-        rule_w2_hold = p2[2] > p0[2]    # 浪 2 不破起算點
-        w1_len = p1[2] - p0[2]
-        w3_len = p3[2] - p2[2]
-        w5_len = p5[2] - p4[2]
-        rule_w3_not_shortest = not (w3_len < w1_len and w3_len < w5_len)
-        
-        if rule_w2_hold and rule_w3_not_shortest and rule_no_overlap:
-            labels.extend([
-                (p1[0], p1[1], p1[2], "①"),
-                (p2[0], p2[1], p2[2], "②"),
-                (p3[0], p3[1], p3[2], "③"),
-                (p4[0], p4[1], p4[2], "④"),
-                (p5[0], p5[1], p5[2], "⑤")
-            ])
-            
-            # 五浪過後的修正段辨識 (ABC vs WXY)
+        is_impulse, rule_detail = _check_impulse_rules(p0, p1, p2, p3, p4, p5, direction)
+
+        if is_impulse:
+            wave_num_labels = ["①", "②", "③", "④", "⑤"]
+            for lbl, pt in zip(wave_num_labels, [p1, p2, p3, p4, p5]):
+                labels.append((pt[0], pt[1], pt[2], lbl))
+
             remains = valid_pivots[6:]
-            if len(remains) >= 3:
-                pa, pb, pc = remains[0:3]
-                # 若 B 浪反彈未過浪 5 高點，且 C 浪破 A 浪低點 -> 標準 ABC
-                if pb[2] < p5[2] and pc[2] < pa[2]:
-                    labels.extend([(pa[0], pa[1], pa[2], "Ⓐ"), (pb[0], pb[1], pb[2], "Ⓑ"), (pc[0], pc[1], pc[2], "Ⓒ")])
-                    pattern_str = "標準 1-5 推升 + A-B-C 修正"
-                else: # 橫向複雜洗盤 -> W-X-Y 複式修正
-                    labels.extend([(pa[0], pa[1], pa[2], "W"), (pb[0], pb[1], pb[2], "X"), (pc[0], pc[1], pc[2], "Y")])
-                    pattern_str = "標準 1-5 推升 + W-X-Y 複式修正"
+            corr_pattern, corr_extra, corr_targets = _classify_correction(p5, remains)
+            labels.extend(corr_extra)
+
+            trend_word = "多頭推升" if direction == 'up' else "空頭下殺"
+            if corr_extra:
+                pattern_str = f"標準 1-5 {trend_word} + {corr_pattern}"
             else:
-                pattern_str = "標準 1-5 推升浪"
+                pattern_str = f"標準 1-5 {trend_word}浪"
+
+            targets = {
+                ("波段高點壓力" if direction == 'up' else "波段低點支撐"): (max if direction == 'up' else min)(p[2] for p in valid_pivots[:6]),
+                "起算關鍵防守": p0[2]
+            }
+            targets.update(corr_targets)
+
+            note = ""
+            if not rule_detail.get("guideline_w1_not_longest", True):
+                note = "（提醒：浪 1 幅度大於浪 3、浪 5，屬非典型結構，建議留意浪 3 是否被低估）"
 
             return {
                 "pattern": pattern_str,
                 "labels": labels,
-                "status": f"成功捕捉多頭推升結構，當前進展至【{labels[-1][3]} 浪】。",
+                "status": f"成功捕捉{trend_word}結構，當前進展至【{labels[-1][3]} 浪】。{note}",
                 "invalid_price": p0[2],
-                "targets": {"波段高點壓力": max([p[2] for p in valid_pivots]), "起漲關鍵防守": p0[2]}
+                "targets": targets
             }
 
-    # --- 情境 B：修正波段辨識 (A-B-C vs W-X-Y 分開判定) ---
-    # 計算波動幅度與時間歷程以區分 A-B-C 或 W-X-Y
-    pivot_count = len(valid_pivots) - 1
-    
-    # 檢查是否具備標準三浪 A-B-C 特性 (幅度明顯、結構單純)
-    if pivot_count <= 4:
-        corr_labels = ["Ⓐ", "Ⓑ", "Ⓒ", "Ⓓ", "Ⓔ"]
-        for i, pt in enumerate(valid_pivots[1:]):
-            labels.append((pt[0], pt[1], pt[2], corr_labels[i] if i < len(corr_labels) else f"V{i}"))
-        
-        return {
-            "pattern": "A-B-C 標準修正浪",
-            "labels": labels,
-            "status": f"當前盤勢符合【A-B-C 單純修正結構】，目前位於【{labels[-1][3]} 浪】。",
-            "invalid_price": p0[2],
-            "targets": {"修正波段高點": max([p[2] for p in valid_pivots]), "修正波段低點": min([p[2] for p in valid_pivots])}
+    # --- 情境 B：不構成衝擊浪 -> 整段視為修正結構分析 ---
+    corr_pattern, corr_extra, corr_targets = _classify_correction(p0, valid_pivots[1:])
+    labels.extend(corr_extra)
+
+    if not corr_targets:
+        corr_targets = {
+            "區間高點": max(p[2] for p in valid_pivots),
+            "區間低點": min(p[2] for p in valid_pivots)
         }
-    else:
-        # 多重轉折與橫向洗盤 -> 標註為 W-X-Y 複式修正
-        wxy_labels = ["W", "X", "Y", "X2", "Z"]
-        for i, pt in enumerate(valid_pivots[1:]):
-            labels.append((pt[0], pt[1], pt[2], wxy_labels[i] if i < len(wxy_labels) else f"V{i}"))
-            
-        return {
-            "pattern": "W-X-Y 複式修正型態",
-            "labels": labels,
-            "status": f"當前呈現高複雜度【W-X-Y 複式修正整理】，目前運行至【{labels[-1][3]} 浪】。",
-            "invalid_price": p0[2],
-            "targets": {"箱型頂部壓力": max([p[2] for p in valid_pivots]), "箱型底部支撐": min([p[2] for p in valid_pivots])}
-        }
+
+    last_label = labels[-1][3] if len(labels) > 1 else "⓪"
+    return {
+        "pattern": corr_pattern,
+        "labels": labels,
+        "status": f"當前盤勢判定為【{corr_pattern}】，目前位於【{last_label} 浪】。",
+        "invalid_price": p0[2],
+        "targets": corr_targets
+    }
 
 def render():
     stock_dict, name_to_id_dict, full_info_df = utils.load_stock_dicts()
