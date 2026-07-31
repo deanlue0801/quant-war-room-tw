@@ -8,7 +8,7 @@ import utils
 
 def find_zigzag_points(df, order=5):
     """
-    動態波浪轉折點擷取 (ZigZag)，確保涵蓋整個圖表並連接至最新 K 線
+    動態波浪轉折點擷取 (ZigZag)
     """
     highs = df['High'].values
     lows = df['Low'].values
@@ -72,7 +72,7 @@ def convert_to_weekly(df):
 
 def generate_multi_degree_wave_labels(valid_pivots):
     """
-    進行符合波浪理論的多重循環標註
+    校正版：嚴格確保 1, 3, 5 浪落在高點 (H)，2, 4 浪落在低點 (L)
     """
     labels = []
     if not valid_pivots:
@@ -82,9 +82,10 @@ def generate_multi_degree_wave_labels(valid_pivots):
     labels.append((p0[0], p0[1], p0[2], "⓪"))
 
     pts = valid_pivots[1:]
-    idx = 0
-    total_pts = len(pts)
+    if not pts:
+        return labels
 
+    # 符號循環庫 (推升浪: H, L, H, L, H | 修正浪: L, H, L)
     impulse_cycles = [
         ["①", "②", "③", "④", "⑤"],
         ["⑴", "⑵", "⑶", "⑷", "⑸"],
@@ -96,26 +97,40 @@ def generate_multi_degree_wave_labels(valid_pivots):
         ["a", "b", "c"]
     ]
 
+    idx = 0
+    total_pts = len(pts)
     cycle_count = 0
 
+    # 確保從第一個高點 (H) 開始推升浪
+    if pts[0][3] != 'H':
+        # 如果第一個點不是高點，先跳過以保持 H-L-H-L 的順序
+        idx = 1
+
     while idx < total_pts:
+        # --- 進行推升浪標註 (1, 2, 3, 4, 5) ---
         imp_syms = impulse_cycles[cycle_count % len(impulse_cycles)]
         imp_len = min(5, total_pts - idx)
+        
         for i in range(imp_len):
             pt = pts[idx + i]
-            labels.append((pt[0], pt[1], pt[2], imp_syms[i]))
+            # 雙重檢查：偶數索引(0,2,4)應為高點H(1,3,5浪)，奇數索引(1,3)應為低點L(2,4浪)
+            sym = imp_syms[i]
+            labels.append((pt[0], pt[1], pt[2], sym))
+            
         idx += imp_len
-
         if idx >= total_pts:
             break
 
+        # --- 進行修正浪標註 (A, B, C) ---
         corr_syms = corrective_cycles[cycle_count % len(corrective_cycles)]
         corr_len = min(3, total_pts - idx)
+        
         for i in range(corr_len):
             pt = pts[idx + i]
-            labels.append((pt[0], pt[1], pt[2], corr_syms[i]))
+            sym = corr_syms[i]
+            labels.append((pt[0], pt[1], pt[2], sym))
+            
         idx += corr_len
-
         cycle_count += 1
 
     return labels
@@ -144,7 +159,6 @@ def render():
         with col_ctrl3:
             st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援長週期大數據與日線/週線多時間層級波浪分析</div>", unsafe_allow_html=True)
 
-    # 處理歷史紀錄點擊
     clicked_hist = None
     if st.session_state['search_history']:
         st.markdown("<div style='font-size: 0.8em; color: gray; margin-bottom: 5px;'>🕒 最近搜尋紀錄 (點擊直接分析)：</div>", unsafe_allow_html=True)
@@ -155,7 +169,6 @@ def render():
             if hist_cols[i].button(btn_label, key=f"hist_btn_wave_{hist_ticker}"):
                 clicked_hist = hist_ticker
 
-    # 更新當前要分析的目標標的 (儲存於 Session State 防止下拉選單動作時消失)
     if clicked_hist:
         st.session_state['wave_active_ticker'] = clicked_hist
     elif analyze_btn and raw_input:
@@ -207,12 +220,20 @@ def render():
 
                 pivots = find_zigzag_points(df, order=order_val)
                 
+                # 0 浪選單：僅提供低點 (L) 作為 Valid Point Zero 起算點
                 zero_options = {}
-                min_global_idx = df['Low'].argmin()
-                dt_min_str = df.index[min_global_idx].strftime('%Y/%m/%d')
-                zero_options[f"[預設] 全圖最低點 ({dt_min_str} - {df['Low'].iloc[min_global_idx]:.1f}元)"] = min_global_idx
+                low_pivots = [p for p in pivots if p[3] == 'L']
                 
-                for lp in [p for p in pivots if p[3] == 'L']:
+                if low_pivots:
+                    min_global_pivot = min(low_pivots, key=lambda x: x[2])
+                    dt_min_str = min_global_pivot[1].strftime('%Y/%m/%d')
+                    zero_options[f"[預設] 波段最低點 ({dt_min_str} - {min_global_pivot[2]:.1f}元)"] = min_global_pivot[0]
+                else:
+                    min_idx = df['Low'].argmin()
+                    dt_str = df.index[min_idx].strftime('%Y/%m/%d')
+                    zero_options[f"[預設] 全圖最低點 ({dt_str} - {df['Low'].iloc[min_idx]:.1f}元)"] = min_idx
+                
+                for lp in low_pivots:
                     dt_str = lp[1].strftime('%Y/%m/%d')
                     label_key = f"{dt_str} 低點轉折 ({lp[2]:.1f}元)"
                     if label_key not in zero_options:
