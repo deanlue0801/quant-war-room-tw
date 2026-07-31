@@ -60,7 +60,7 @@ def find_zigzag_points(df, order=5):
     return filtered_pivots
 
 def convert_to_weekly(df):
-    """將日線 K 線資料重採樣 (Resample) 為週線 K 線"""
+    """將日線 K 線資料重採樣為週線 K 線"""
     df_weekly = df.resample('W-FRI').agg({
         'Open': 'first',
         'High': 'max',
@@ -125,6 +125,8 @@ def render():
 
     if 'search_history' not in st.session_state:
         st.session_state['search_history'] = []
+    if 'wave_active_ticker' not in st.session_state:
+        st.session_state['wave_active_ticker'] = None
 
     def add_to_history(ticker):
         if ticker and ticker not in st.session_state['search_history']:
@@ -142,72 +144,69 @@ def render():
         with col_ctrl3:
             st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援長週期大數據與日線/週線多時間層級波浪分析</div>", unsafe_allow_html=True)
 
+    # 處理歷史紀錄點擊
+    clicked_hist = None
     if st.session_state['search_history']:
         st.markdown("<div style='font-size: 0.8em; color: gray; margin-bottom: 5px;'>🕒 最近搜尋紀錄 (點擊直接分析)：</div>", unsafe_allow_html=True)
         hist_cols = st.columns(len(st.session_state['search_history']) + 1)
-        clicked_hist = None
         for i, hist_ticker in enumerate(st.session_state['search_history']):
             hist_name = stock_dict.get(hist_ticker, "")
             btn_label = f"{hist_ticker} {hist_name}" if hist_name else hist_ticker
             if hist_cols[i].button(btn_label, key=f"hist_btn_wave_{hist_ticker}"):
                 clicked_hist = hist_ticker
-    else:
-        clicked_hist = None
 
-    search_term = ""
+    # 更新當前要分析的目標標的 (儲存於 Session State 防止下拉選單動作時消失)
     if clicked_hist:
-        search_term = clicked_hist
+        st.session_state['wave_active_ticker'] = clicked_hist
     elif analyze_btn and raw_input:
         search_term = raw_input.strip()
-
-    if search_term:
         raw_ticker = name_to_id_dict.get(search_term, search_term) if search_term not in stock_dict else search_term
-        stock_name = stock_dict.get(raw_ticker, "")
-        display_title = f"{raw_ticker} {stock_name}" if stock_name else raw_ticker
+        st.session_state['wave_active_ticker'] = raw_ticker
+
+    current_ticker = st.session_state['wave_active_ticker']
+
+    if current_ticker:
+        stock_name = stock_dict.get(current_ticker, "")
+        display_title = f"{current_ticker} {stock_name}" if stock_name else current_ticker
         
-        add_to_history(raw_ticker)
+        add_to_history(current_ticker)
 
         with st.spinner(f'解析 [{display_title}] 長週期艾略特波浪結構中...'):
             try:
-                df_full = utils.fetch_tech_data_fugle(raw_ticker).copy()
+                df_full = utils.fetch_tech_data_fugle(current_ticker).copy()
                 if len(df_full) < 80:
                     st.error(f"🚨 無法取得 [{display_title}] 足夠的歷史報價資料。")
                     st.stop()
 
-                # 控制區：時間週期與資料長度切換
                 st.markdown("<hr style='margin: 5px 0 15px 0;'>", unsafe_allow_html=True)
                 col_tf1, col_tf2, col_tf3 = st.columns([2.5, 3.5, 4])
                 
                 with col_tf1:
-                    timeframe = st.radio("⏳ 分析週期 (Timeframe)：", ["日線 (Daily)", "週線 (Weekly)"], horizontal=True, key=f"tf_{raw_ticker}")
+                    timeframe = st.radio("⏳ 分析週期 (Timeframe)：", ["日線 (Daily)", "週線 (Weekly)"], horizontal=True, key=f"tf_{current_ticker}")
                 
                 with col_tf2:
                     history_len = st.selectbox("📅 歷史資料涵蓋範圍：", [
                         "近 3 年 (約 750 根 K 線 - 推薦大波浪)",
                         "近 5 年 (約 1250 根 K 線 - 長期宏觀)",
                         "近 1 年 (約 250 根 K 線 - 中短波段)"
-                    ], index=0, key=f"len_{raw_ticker}")
+                    ], index=0, key=f"len_{current_ticker}")
 
-                # 依據選擇擷取歷史資料長度
                 limit_map = {"近 3 年 (約 750 根 K 線 - 推薦大波浪)": 750, "近 5 年 (約 1250 根 K 線 - 長期宏觀)": 1250, "近 1 年 (約 250 根 K 線 - 中短波段)": 250}
                 fetch_len = limit_map[history_len]
                 
                 df_base = df_full.tail(fetch_len).copy()
 
-                # 判斷是否轉為週線
                 if "週線" in timeframe:
                     df = convert_to_weekly(df_base)
-                    order_val = 3  # 週線轉折點敏感度
+                    order_val = 3
                     x_dates = df.index.strftime('%Y-%m-%d')
                 else:
                     df = df_base
-                    order_val = 6  # 日線轉折點敏感度（適當過濾雜訊）
+                    order_val = 6
                     x_dates = df.index.strftime('%m-%d')
 
-                # 轉折點計算
                 pivots = find_zigzag_points(df, order=order_val)
                 
-                # Point Zero 下拉選單與 Session State 綁定
                 zero_options = {}
                 min_global_idx = df['Low'].argmin()
                 dt_min_str = df.index[min_global_idx].strftime('%Y/%m/%d')
@@ -219,7 +218,7 @@ def render():
                     if label_key not in zero_options:
                         zero_options[label_key] = lp[0]
 
-                state_key = f"wave_zero_select_{raw_ticker}"
+                state_key = f"wave_zero_select_{current_ticker}"
                 
                 with col_tf3:
                     selected_zero_label = st.selectbox(
@@ -229,17 +228,14 @@ def render():
                     )
                     selected_start_idx = zero_options[selected_zero_label]
 
-                # 濾出起算點後的轉折點，進行波浪標註
                 valid_pivots = [p for p in pivots if p[0] >= selected_start_idx]
                 labels = generate_multi_degree_wave_labels(valid_pivots)
 
                 # --- 繪圖區 ---
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
                 
-                # K 線
                 fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                 
-                # 波浪軌跡連線與標記
                 if labels:
                     wave_x = [df.index[lbl[0]].strftime('%Y-%m-%d' if "週線" in timeframe else '%m-%d') for lbl in labels]
                     wave_y = [lbl[2] for lbl in labels]
@@ -255,7 +251,6 @@ def render():
                         name="波浪軌跡"
                     ), row=1, col=1)
 
-                # 成交量
                 colors_vol = ['#FF4B4B' if row['Close'] >= row['Open'] else '#00FF00' for index, row in df.iterrows()]
                 fig.add_trace(go.Bar(x=x_dates, y=df['Volume']/1000, marker_color=colors_vol, name="成交量(張)"), row=2, col=1)
 
@@ -266,7 +261,6 @@ def render():
                 last_label = labels[-1][3] if labels else "⓪"
                 all_prices = [p[2] for p in valid_pivots] if valid_pivots else [0]
 
-                # --- UI 資訊卡片 ---
                 st.markdown(f"### {display_title} &nbsp;&nbsp; | &nbsp;&nbsp; 視角：<span style='color:gold;'>{timeframe} ({history_len.split()[0]})</span>", unsafe_allow_html=True)
                 
                 col_chart, col_info = st.columns([7, 3])
