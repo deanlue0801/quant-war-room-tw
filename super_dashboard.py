@@ -8,13 +8,13 @@ st.set_page_config(page_title="終極量化戰情室", layout="wide", initial_si
 
 # 載入自訂工具與分頁模組
 import utils
-from tabs import tab_single, tab_666
+from tabs import tab_single, tab_666, tab_wave
 
 # 2. 載入共用 CSS 樣式
 utils.load_css()
 
-# 3. 建立畫面分頁
-tab_monitor, tab_666_page = st.tabs(["📊 單檔戰情解析", "🎯 666戰法 (60分K分析)"])
+# 3. 建立畫面分頁 (新增波浪分析頁籤)
+tab_monitor, tab_666_page, tab_wave_page = st.tabs(["📊 單檔戰情解析", "🎯 666戰法 (60分K分析)", "🌊 艾略特波浪分析"])
 
 # 4. 呼叫各分頁的渲染函數
 with tab_monitor:
@@ -22,3 +22,6 @@ with tab_monitor:
 
 with tab_666_page:
     tab_666.render()
+
+with tab_wave_page:
+    tab_wave.render()
