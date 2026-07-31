@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import utils
 
-def find_zigzag_points(df, order=4):
+def find_zigzag_points(df, order=5):
     """
     動態波浪轉折點擷取 (ZigZag)，確保涵蓋整個圖表並連接至最新 K 線
     """
@@ -59,9 +59,20 @@ def find_zigzag_points(df, order=4):
 
     return filtered_pivots
 
+def convert_to_weekly(df):
+    """將日線 K 線資料重採樣 (Resample) 為週線 K 線"""
+    df_weekly = df.resample('W-FRI').agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    }).dropna()
+    return df_weekly
+
 def generate_multi_degree_wave_labels(valid_pivots):
     """
-    進行符合波浪理論的多重循環標註 (1-5 衝擊浪與 A-B-C / W-X-Y 修正浪自動交替循環)
+    進行符合波浪理論的多重循環標註
     """
     labels = []
     if not valid_pivots:
@@ -74,7 +85,6 @@ def generate_multi_degree_wave_labels(valid_pivots):
     idx = 0
     total_pts = len(pts)
 
-    # 循環符號池（大層級與次級結構交替）
     impulse_cycles = [
         ["①", "②", "③", "④", "⑤"],
         ["⑴", "⑵", "⑶", "⑷", "⑸"],
@@ -89,7 +99,6 @@ def generate_multi_degree_wave_labels(valid_pivots):
     cycle_count = 0
 
     while idx < total_pts:
-        # 1. 先標註一組 1-5 推升浪 (需要至少 5 個點)
         imp_syms = impulse_cycles[cycle_count % len(impulse_cycles)]
         imp_len = min(5, total_pts - idx)
         for i in range(imp_len):
@@ -100,7 +109,6 @@ def generate_multi_degree_wave_labels(valid_pivots):
         if idx >= total_pts:
             break
 
-        # 2. 接著標註 修正浪 (A-B-C 或 W-X-Y)
         corr_syms = corrective_cycles[cycle_count % len(corrective_cycles)]
         corr_len = min(3, total_pts - idx)
         for i in range(corr_len):
@@ -132,7 +140,7 @@ def render():
         with col_ctrl2:
             analyze_btn = st.form_submit_button("🌊 啟動波浪理論解析", use_container_width=True)
         with col_ctrl3:
-            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援多重層級循環標註（1-5 與 A-B-C 自動循環與起算點切換）</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援長週期大數據與日線/週線多時間層級波浪分析</div>", unsafe_allow_html=True)
 
     if st.session_state['search_history']:
         st.markdown("<div style='font-size: 0.8em; color: gray; margin-bottom: 5px;'>🕒 最近搜尋紀錄 (點擊直接分析)：</div>", unsafe_allow_html=True)
@@ -159,18 +167,45 @@ def render():
         
         add_to_history(raw_ticker)
 
-        with st.spinner(f'解析 [{display_title}] 艾略特波浪結構中...'):
+        with st.spinner(f'解析 [{display_title}] 長週期艾略特波浪結構中...'):
             try:
                 df_full = utils.fetch_tech_data_fugle(raw_ticker).copy()
                 if len(df_full) < 80:
-                    st.error(f"🚨 無法取得 [{display_title}] 足夠的日線歷史報價資料。")
+                    st.error(f"🚨 無法取得 [{display_title}] 足夠的歷史報價資料。")
                     st.stop()
 
-                df = df_full.tail(260).copy()
-                x_dates = df.index.strftime('%m-%d')
+                # 控制區：時間週期與資料長度切換
+                st.markdown("<hr style='margin: 5px 0 15px 0;'>", unsafe_allow_html=True)
+                col_tf1, col_tf2, col_tf3 = st.columns([2.5, 3.5, 4])
                 
+                with col_tf1:
+                    timeframe = st.radio("⏳ 分析週期 (Timeframe)：", ["日線 (Daily)", "週線 (Weekly)"], horizontal=True, key=f"tf_{raw_ticker}")
+                
+                with col_tf2:
+                    history_len = st.selectbox("📅 歷史資料涵蓋範圍：", [
+                        "近 3 年 (約 750 根 K 線 - 推薦大波浪)",
+                        "近 5 年 (約 1250 根 K 線 - 長期宏觀)",
+                        "近 1 年 (約 250 根 K 線 - 中短波段)"
+                    ], index=0, key=f"len_{raw_ticker}")
+
+                # 依據選擇擷取歷史資料長度
+                limit_map = {"近 3 年 (約 750 根 K 線 - 推薦大波浪)": 750, "近 5 年 (約 1250 根 K 線 - 長期宏觀)": 1250, "近 1 年 (約 250 根 K 線 - 中短波段)": 250}
+                fetch_len = limit_map[history_len]
+                
+                df_base = df_full.tail(fetch_len).copy()
+
+                # 判斷是否轉為週線
+                if "週線" in timeframe:
+                    df = convert_to_weekly(df_base)
+                    order_val = 3  # 週線轉折點敏感度
+                    x_dates = df.index.strftime('%Y-%m-%d')
+                else:
+                    df = df_base
+                    order_val = 6  # 日線轉折點敏感度（適當過濾雜訊）
+                    x_dates = df.index.strftime('%m-%d')
+
                 # 轉折點計算
-                pivots = find_zigzag_points(df, order=4)
+                pivots = find_zigzag_points(df, order=order_val)
                 
                 # Point Zero 下拉選單與 Session State 綁定
                 zero_options = {}
@@ -186,17 +221,15 @@ def render():
 
                 state_key = f"wave_zero_select_{raw_ticker}"
                 
-                st.markdown("<hr style='margin: 5px 0 15px 0;'>", unsafe_allow_html=True)
-                col_sel1, col_sel2 = st.columns([4, 6])
-                with col_sel1:
+                with col_tf3:
                     selected_zero_label = st.selectbox(
-                        "📌 選擇波浪 Point Zero (0 浪起算點)：",
+                        "📌 波浪 0 浪起算點：",
                         options=list(zero_options.keys()),
                         key=state_key
                     )
                     selected_start_idx = zero_options[selected_zero_label]
 
-                # 濾出起算點後的轉折點，進行循環層級標註
+                # 濾出起算點後的轉折點，進行波浪標註
                 valid_pivots = [p for p in pivots if p[0] >= selected_start_idx]
                 labels = generate_multi_degree_wave_labels(valid_pivots)
 
@@ -206,9 +239,9 @@ def render():
                 # K 線
                 fig.add_trace(go.Candlestick(x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="K線", increasing_line_color='#FF4B4B', decreasing_line_color='#00FF00'), row=1, col=1)
                 
-                # 多重層級連線與標記
+                # 波浪軌跡連線與標記
                 if labels:
-                    wave_x = [df.index[lbl[0]].strftime('%m-%d') for lbl in labels]
+                    wave_x = [df.index[lbl[0]].strftime('%Y-%m-%d' if "週線" in timeframe else '%m-%d') for lbl in labels]
                     wave_y = [lbl[2] for lbl in labels]
                     
                     fig.add_trace(go.Scatter(
@@ -234,7 +267,7 @@ def render():
                 all_prices = [p[2] for p in valid_pivots] if valid_pivots else [0]
 
                 # --- UI 資訊卡片 ---
-                st.markdown(f"### {display_title} &nbsp;&nbsp; | &nbsp;&nbsp; 波浪狀態：<span style='color:gold;'>多重波段循環解析中</span>", unsafe_allow_html=True)
+                st.markdown(f"### {display_title} &nbsp;&nbsp; | &nbsp;&nbsp; 視角：<span style='color:gold;'>{timeframe} ({history_len.split()[0]})</span>", unsafe_allow_html=True)
                 
                 col_chart, col_info = st.columns([7, 3])
                 with col_chart:
@@ -243,10 +276,10 @@ def render():
                 with col_info:
                     with st.container(border=True):
                         st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#8ab4f8; margin-bottom:8px;">🎯 當前波浪位階</div>', unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:0.95em; line-height:1.6;'>最新轉折點位於【<b>{last_label}</b>】浪，已完成多組推升與修正浪之連貫標註。</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:0.95em; line-height:1.6;'>最新轉折點位於【<b>{last_label}</b>】浪。<br>💡 <i>建議切換至<b>週線</b>觀察大型大五浪結構，再回到<b>日線</b>比對子浪。</i></div>", unsafe_allow_html=True)
 
                     with st.container(border=True):
-                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FF4B4B; margin-bottom:8px;">🛡️ 起算點防守價</div>', unsafe_allow_html=True)
+                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FF4B4B; margin-bottom:8px;">🛡️ 起算點價格</div>', unsafe_allow_html=True)
                         p0_price = valid_pivots[0][2] if valid_pivots else 0
                         st.markdown(f"<div style='font-size:1.2em; font-weight:bold; color:#FF4B4B;'>{p0_price:.2f} 元</div>", unsafe_allow_html=True)
 
