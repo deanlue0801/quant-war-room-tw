@@ -72,7 +72,7 @@ def convert_to_weekly(df):
 
 def generate_multi_degree_wave_labels(valid_pivots):
     """
-    校正版：嚴格確保 1, 3, 5 浪落在高點 (H)，2, 4 浪落在低點 (L)
+    依 TMGM 教學進行嚴格高低對應的波浪標註 (1,3,5為高點H, 2,4為低點L)
     """
     labels = []
     if not valid_pivots:
@@ -85,7 +85,6 @@ def generate_multi_degree_wave_labels(valid_pivots):
     if not pts:
         return labels
 
-    # 符號循環庫 (推升浪: H, L, H, L, H | 修正浪: L, H, L)
     impulse_cycles = [
         ["①", "②", "③", "④", "⑤"],
         ["⑴", "⑵", "⑶", "⑷", "⑸"],
@@ -101,39 +100,70 @@ def generate_multi_degree_wave_labels(valid_pivots):
     total_pts = len(pts)
     cycle_count = 0
 
-    # 確保從第一個高點 (H) 開始推升浪
     if pts[0][3] != 'H':
-        # 如果第一個點不是高點，先跳過以保持 H-L-H-L 的順序
         idx = 1
 
     while idx < total_pts:
-        # --- 進行推升浪標註 (1, 2, 3, 4, 5) ---
         imp_syms = impulse_cycles[cycle_count % len(impulse_cycles)]
         imp_len = min(5, total_pts - idx)
         
         for i in range(imp_len):
             pt = pts[idx + i]
-            # 雙重檢查：偶數索引(0,2,4)應為高點H(1,3,5浪)，奇數索引(1,3)應為低點L(2,4浪)
-            sym = imp_syms[i]
-            labels.append((pt[0], pt[1], pt[2], sym))
+            labels.append((pt[0], pt[1], pt[2], imp_syms[i]))
             
         idx += imp_len
         if idx >= total_pts:
             break
 
-        # --- 進行修正浪標註 (A, B, C) ---
         corr_syms = corrective_cycles[cycle_count % len(corrective_cycles)]
         corr_len = min(3, total_pts - idx)
         
         for i in range(corr_len):
             pt = pts[idx + i]
-            sym = corr_syms[i]
-            labels.append((pt[0], pt[1], pt[2], sym))
+            labels.append((pt[0], pt[1], pt[2], corr_syms[i]))
             
         idx += corr_len
         cycle_count += 1
 
     return labels
+
+def validate_elliott_rules(valid_pivots):
+    """
+    依據 TMGM 艾略特波浪三大鐵律與黃金比例進行檢驗
+    """
+    warnings = []
+    fib_info = {}
+    
+    if len(valid_pivots) < 6:
+        return ["尚未形成完整 1-5 浪結構"], fib_info
+
+    p0, p1, p2, p3, p4, p5 = valid_pivots[:6]
+    
+    len_w1 = abs(p1[2] - p0[2])
+    len_w2 = abs(p2[2] - p1[2])
+    len_w3 = abs(p3[2] - p2[2])
+    len_w4 = abs(p4[2] - p3[2])
+    len_w5 = abs(p5[2] - p4[2])
+
+    # 1. 鐵律檢驗
+    if p2[2] <= p0[2]:
+        warnings.append("⚠️ 違反鐵律 1：浪 2 跌破浪 0 起算點！")
+    if len_w3 < len_w1 and len_w3 < len_w5:
+        warnings.append("⚠️ 違反鐵律 2：浪 3 為三個推升浪中最短！")
+    if p4[2] <= p1[2]:
+        warnings.append("⚠️ 違反鐵律 3：浪 4 回檔與浪 1 頂峰重疊！")
+
+    if not warnings:
+        warnings.append("✅ 完美符合艾略特三大鐵律！")
+
+    # 2. 斐波那契黃金比例計算
+    if len_w1 > 0:
+        fib_info["浪2/浪1 回檔比"] = f"{(len_w2 / len_w1)*100:.1f}% (目標: 50%-61.8%)"
+        fib_info["浪3/浪1 延伸倍數"] = f"{(len_w3 / len_w1):.2f} 倍 (目標: 1.618倍)"
+    if len_w3 > 0:
+        fib_info["浪4/浪3 回檔比"] = f"{(len_w4 / len_w3)*100:.1f}% (目標: 23.6%-38.2%)"
+
+    return warnings, fib_info
 
 def render():
     stock_dict, name_to_id_dict, full_info_df = utils.load_stock_dicts()
@@ -157,7 +187,7 @@ def render():
         with col_ctrl2:
             analyze_btn = st.form_submit_button("🌊 啟動波浪理論解析", use_container_width=True)
         with col_ctrl3:
-            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 支援長週期大數據與日線/週線多時間層級波浪分析</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top: 8px; font-size: 0.9em; color:gray;'>※ 結合 TMGM 艾略特波浪三大鐵律與斐波那契比率自動驗證</div>", unsafe_allow_html=True)
 
     clicked_hist = None
     if st.session_state['search_history']:
@@ -220,7 +250,6 @@ def render():
 
                 pivots = find_zigzag_points(df, order=order_val)
                 
-                # 0 浪選單：僅提供低點 (L) 作為 Valid Point Zero 起算點
                 zero_options = {}
                 low_pivots = [p for p in pivots if p[3] == 'L']
                 
@@ -251,6 +280,9 @@ def render():
 
                 valid_pivots = [p for p in pivots if p[0] >= selected_start_idx]
                 labels = generate_multi_degree_wave_labels(valid_pivots)
+                
+                # TMGM 三大鐵律與斐波那契驗證
+                rule_warnings, fib_ratios = validate_elliott_rules(valid_pivots)
 
                 # --- 繪圖區 ---
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.75, 0.25])
@@ -291,17 +323,20 @@ def render():
                 with col_info:
                     with st.container(border=True):
                         st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#8ab4f8; margin-bottom:8px;">🎯 當前波浪位階</div>', unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:0.95em; line-height:1.6;'>最新轉折點位於【<b>{last_label}</b>】浪。<br>💡 <i>建議切換至<b>週線</b>觀察大型大五浪結構，再回到<b>日線</b>比對子浪。</i></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:0.95em; line-height:1.6;'>最新轉折點位於【<b>{last_label}</b>】浪。</div>", unsafe_allow_html=True)
 
                     with st.container(border=True):
-                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FF4B4B; margin-bottom:8px;">🛡️ 起算點價格</div>', unsafe_allow_html=True)
-                        p0_price = valid_pivots[0][2] if valid_pivots else 0
-                        st.markdown(f"<div style='font-size:1.2em; font-weight:bold; color:#FF4B4B;'>{p0_price:.2f} 元</div>", unsafe_allow_html=True)
+                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FFD700; margin-bottom:8px;">⚖️ TMGM 鐵律檢驗</div>', unsafe_allow_html=True)
+                        for w in rule_warnings:
+                            st.markdown(f"<div style='font-size:0.85em; margin-bottom:4px;'>{w}</div>", unsafe_allow_html=True)
 
                     with st.container(border=True):
-                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FFA500; margin-bottom:8px;">📐 關鍵區域價位</div>', unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:0.9em;'>波段最高壓力： <b>{max(all_prices):.1f}</b></div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:0.9em;'>波段最低支撐： <b>{min(all_prices):.1f}</b></div>", unsafe_allow_html=True)
+                        st.markdown('<div style="font-weight:bold; font-size:1.1em; color:#FFA500; margin-bottom:8px;">📐 斐波那契比例 (Fibonacci)</div>', unsafe_allow_html=True)
+                        if fib_ratios:
+                            for k, v in fib_ratios.items():
+                                st.markdown(f"<div style='font-size:0.85em;'><b>{k}</b>: <br><span style='color:cyan;'>{v}</span></div>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("<div style='font-size:0.85em; color:gray;'>轉折點不足，無法計算比例</div>", unsafe_allow_html=True)
 
             except Exception as e:
                 st.error(f"波浪分析資料處理發生錯誤：{e}")
